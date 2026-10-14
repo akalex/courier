@@ -100,36 +100,33 @@ docker run --rm -it \
 
 ## VM deployment with WAHA
 
-This project is designed to run with WAHA as a sidecar service. The simplest deployment on a small VM is:
+GitHub Actions runs CI on pushes and pull requests. After CI passes on `main`, it builds and publishes multi-platform images to GitHub Container Registry:
 
-1. Create a VM and install Docker
-2. Clone this repository on the VM
-3. Copy `.env.example` to `.env` and fill in the real values
-4. Start both services with Docker Compose
+- `ghcr.io/akalex/courier:latest`
+- `ghcr.io/akalex/courier:<commit-sha>`
+
+Image publishing does not deploy automatically. To deploy manually on the Oracle VM:
+
+1. Install Docker and clone this repository on the VM.
+2. Copy `.env.example` to `.env` and fill in the real runtime values.
+3. Make the GHCR package public, or authenticate Docker on the VM with a GitHub token that has `read:packages`.
+4. Set `COURIER_TAG` in `.env` to `latest` or the commit SHA you want to deploy.
+5. Start WAHA, then pull and start Courier:
 
 ```bash
 cp .env.example .env
-# edit .env with the real WAHA values
+# Edit .env with the real values, including COURIER_TAG.
 
-docker compose up -d --build
+docker compose up -d waha
+docker compose pull courier
+docker compose up -d courier
 ```
 
-The runtime configuration is intentionally environment-based, so credentials never need to live in Git.
+To upgrade later, change `COURIER_TAG` in `.env` and run `docker compose pull courier && docker compose up -d courier`. Using a commit-SHA tag makes rollbacks reproducible.
 
-Example `.env`:
+Runtime credentials stay on the VM in the ignored `.env` file, not in Git. WAHA's web UI is bound to the VM's loopback interface; reach it through an SSH port forward rather than exposing port `3000` publicly.
 
-```env
-TRANSPORT=waha
-WAHA_URL=http://waha:3000
-WAHA_API_KEY=your-key
-WAHA_SESSION=default
-SOURCE_CHAT_ID=120363123456789012@g.us
-TARGET_CHAT_ID=120363987654321098@g.us
-LOG_LEVEL=INFO
-LISTEN_PORT=8000
-```
-
-After the services start, open the WAHA web UI at `http://<vm-host>:3000` and complete the WhatsApp login flow. Then Courier will begin forwarding matching messages.
+> The WAHA adapter currently does not receive inbound webhook events. The image pipeline and deployment can be exercised, but end-to-end message forwarding requires implementing that receive path first.
 
 ## Project structure
 

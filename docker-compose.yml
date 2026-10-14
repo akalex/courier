@@ -3,16 +3,14 @@ services:
     image: devlikeapro/waha:latest
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - ./waha-data:/app/env
     environment:
       WAHA_SESSION: default
 
   courier:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/akalex/courier:${COURIER_TAG:-latest}
     restart: unless-stopped
     depends_on:
       - waha
