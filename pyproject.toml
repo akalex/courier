@@ -1,54 +1,47 @@
 [project]
 name = "courier"
 version = "0.1.0"
-description = "Tiny, extensible Python bot that forwards filtered messages (text and media) from one WhatsApp group to another, with a pluggable transport layer."
-license = "MIT"
+description = "Async WhatsApp group-to-group forwarder with a pluggable transport layer."
+license = { text = "MIT" }
 authors = [
     { name = "Oleksandr Omyshev", email = "a.omyshev@gmail.com" },
 ]
-maintainers = [
-    { name = "Oleksandr Omyshev", email = "a.omyshev@gmail.com" },
-]
 readme = "README.md"
-keywords = [
-    "async", "asyncio", "WhatsApp", "WAHA", "python3", "messaing",
-]
-classifiers = [
-    "Development Status :: 5 - Production/Stable",
-    "Intended Audience :: Developers",
-    "Natural Language :: English",
-    "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.14",
-]
 requires-python = ">=3.14"
 dependencies = [
-    "aiohttp>=3.9",
+    "httpx>=0.28",
     "pyyaml>=6.0",
 ]
 
 [project.urls]
 Repository = "https://github.com/akalex/courier"
 
-[tool.uv]
-package = false  # application, not a distributable package
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.6",
+]
 
-[tool.mypy]
-python_version = "3.14"
-follow_imports = "skip"
-ignore_missing_imports = true
+[tool.uv]
+package = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 120
 target-version = "py314"
-exclude = ["tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "C90", "I"]
-mccabe.max-complexity = 10
+fixable = ["ALL"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
 
 [tool.ruff.lint.isort]
 known-first-party = ["courier", "tests"]
-known-third-party = ["faker", "httpx", "pytest", "pytest_httpx"]
 lines-after-imports = 2
 
 [tool.ruff.format]

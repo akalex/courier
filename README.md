@@ -1,18 +1,129 @@
 # Courier
 
-A small async Python service that watches one WhatsApp group and forwards messages to another, filtered by sender and keywords. WhatsApp access goes through the WAHA sidecar in Docker, and the core only depends on a `Transport` interface, so swapping WhatsApp for another messenger means writing a single adapter.
+Courier is an async Python forwarder for WhatsApp group messages. It watches one source chat, applies optional sender and keyword filters, and relays matching messages to a target chat.
 
-## Development
+The project is built with a transport abstraction so the message-forwarding logic stays separate from the WhatsApp implementation. The current adapter uses WAHA as the WhatsApp backend.
+
+## Features
+
+- Forward messages from one WhatsApp chat to another
+- Filter by sender ID/name and/or keyword matches
+- Deduplicate recent incoming message IDs to avoid loops
+- Keep attachment handling isolated to the adapter layer
+- Run as a normal Python service or inside Docker
+
+## Requirements
+
+- Python 3.14+
+- uv
+- A running WAHA instance reachable by the app
+
+## Installation
 
 ```bash
-uv sync
-LOG_LEVEL=DEBUG uv run python -m bot.main
+cd /workspaces/courier
+uv sync --dev
 ```
 
-## Run with Docker
+## Configuration
+
+Courier reads settings from `config.yaml` and environment variables. Environment values override the YAML file.
+
+Example `config.yaml`:
+
+```yaml
+transport: waha
+source_chat_id: "120363123456789012@g.us"
+target_chat_id: "120363987654321098@g.us"
+listen_port: 8000
+log_level: INFO
+waha_url: "http://localhost:3000"
+waha_api_key: "your-wahtsapp-api-key"
+waha_session: "default"
+
+filters:
+  keywords:
+    - "vip"
+    - "alert"
+  senders:
+    - "+1234567890"
+    - "alice@example.com"
+```
+
+Supported environment variables:
+
+- `TRANSPORT`
+- `SOURCE_CHAT_ID`
+- `TARGET_CHAT_ID`
+- `LISTEN_PORT`
+- `LOG_LEVEL`
+- `WAHA_URL`
+- `WAHA_API_KEY`
+- `WAHA_SESSION`
+- `CONFIG_PATH`
+
+## Run locally
 
 ```bash
-cp .env.example .env   # set WAHA_API_KEY
-uv lock                # generates uv.lock (needed by the Dockerfile)
-docker compose up -d --build
+cd /workspaces/courier
+uv run python -m courier.main
 ```
+
+You can set overrides inline if needed:
+
+```bash
+LOG_LEVEL=DEBUG SOURCE_CHAT_ID="..." TARGET_CHAT_ID="..." \
+WAHA_URL="http://localhost:3000" WAHA_API_KEY="..." \
+uv run python -m courier.main
+```
+
+## Docker
+
+Build the image:
+
+```bash
+cd /workspaces/courier
+docker build -t courier .
+```
+
+Run it with required environment variables:
+
+```bash
+docker run --rm -it \
+  -e TRANSPORT=waha \
+  -e SOURCE_CHAT_ID="..." \
+  -e TARGET_CHAT_ID="..." \
+  -e WAHA_URL="http://host.docker.internal:3000" \
+  -e WAHA_API_KEY="..." \
+  courier
+```
+
+## Project structure
+
+```text
+courier/
+  adapters/
+    __init__.py
+    waha.py
+  __init__.py
+  config.py
+  domain.py
+  filters.py
+  forwarder.py
+  main.py
+  ports.py
+```
+
+## Development checks
+
+```bash
+uv sync --dev
+uv run pytest -q
+uv run ruff check .
+```
+
+## Notes
+
+- The WAHA adapter is intentionally isolated in `courier/adapters/waha.py`.
+- Filters are pluggable and can be combined with `AllOf` or `AnyOf` logic.
+- The service keeps a bounded recent-message cache to reduce accidental forwarding loops.
