@@ -1,0 +1,27 @@
+services:
+  waha:
+    image: devlikeapro/waha:latest
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./waha-data:/app/env
+    environment:
+      WAHA_SESSION: default
+
+  courier:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - waha
+    environment:
+      TRANSPORT: waha
+      WAHA_URL: http://waha:3000
+      WAHA_API_KEY: ${WAHA_API_KEY:-}
+      WAHA_SESSION: ${WAHA_SESSION:-default}
+      SOURCE_CHAT_ID: ${SOURCE_CHAT_ID}
+      TARGET_CHAT_ID: ${TARGET_CHAT_ID}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LISTEN_PORT: ${LISTEN_PORT:-8000}

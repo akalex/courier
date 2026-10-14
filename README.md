@@ -98,6 +98,39 @@ docker run --rm -it \
   courier
 ```
 
+## VM deployment with WAHA
+
+This project is designed to run with WAHA as a sidecar service. The simplest deployment on a small VM is:
+
+1. Create a VM and install Docker
+2. Clone this repository on the VM
+3. Copy `.env.example` to `.env` and fill in the real values
+4. Start both services with Docker Compose
+
+```bash
+cp .env.example .env
+# edit .env with the real WAHA values
+
+docker compose up -d --build
+```
+
+The runtime configuration is intentionally environment-based, so credentials never need to live in Git.
+
+Example `.env`:
+
+```env
+TRANSPORT=waha
+WAHA_URL=http://waha:3000
+WAHA_API_KEY=your-key
+WAHA_SESSION=default
+SOURCE_CHAT_ID=120363123456789012@g.us
+TARGET_CHAT_ID=120363987654321098@g.us
+LOG_LEVEL=INFO
+LISTEN_PORT=8000
+```
+
+After the services start, open the WAHA web UI at `http://<vm-host>:3000` and complete the WhatsApp login flow. Then Courier will begin forwarding matching messages.
+
 ## Project structure
 
 ```text
