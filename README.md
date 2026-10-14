@@ -126,7 +126,7 @@ To upgrade later, change `COURIER_TAG` in `.env` and run `docker compose pull co
 
 Runtime credentials stay on the VM in the ignored `.env` file, not in Git. WAHA's web UI is bound to the VM's loopback interface; reach it through an SSH port forward rather than exposing port `3000` publicly.
 
-> The WAHA adapter currently does not receive inbound webhook events. The image pipeline and deployment can be exercised, but end-to-end message forwarding requires implementing that receive path first.
+> The WAHA adapter listens for inbound webhook events on the local `/webhook` endpoint using `LISTEN_PORT` and forwards them through the configured callback. Configure WAHA to send incoming messages to this endpoint so the relay can operate end-to-end.
 
 ## Project structure
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 from typing import Any
 
@@ -64,6 +65,7 @@ class WAHATransport:
         self.loop = loop
         self.session: httpx.AsyncClient | None = None
         self._on_message = None
+        self._server: asyncio.AbstractServer | None = None
 
     async def start(self, on_message) -> None:
         """Start the WAHA HTTP client so messages can be sent and received.
@@ -83,14 +85,91 @@ class WAHATransport:
             headers=headers,
             timeout=httpx.Timeout(30.0, connect=10.0, read=20.0),
         )
+
+        if self._server is None:
+            self._server = await asyncio.start_server(self._handle_http_request, "0.0.0.0", self.listen_port)
+
         logger.info("WAHA transport started for %s", self.base_url)
 
-    async def stop(self) -> None:
-        """Close the underlying WAHA session.
+    async def _handle_http_request(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        """Accept inbound WAHA webhook payloads and invoke the configured callback."""
+        try:
+            method, target, body = await self._read_http_request(reader)
+        except (asyncio.IncompleteReadError, ValueError, json.JSONDecodeError):
+            await self._write_http_response(writer, 400, b"")
+            return
+        except Exception:
+            logger.exception("WAHA webhook request failed")
+            await self._write_http_response(writer, 500, b"")
+            return
 
-        Raises:
-            Exception: If the async client close operation fails.
-        """
+        if method == "GET" and target == "/health":
+            await self._write_http_response(writer, 200, b"OK")
+            return
+        if method == "POST" and target == "/webhook":
+            try:
+                payload = json.loads(body.decode("utf-8")) if body else {}
+            except json.JSONDecodeError:
+                await self._write_http_response(writer, 400, b"")
+                return
+            if isinstance(payload, dict):
+                message = self._message_from_payload(payload)
+                if message is not None:
+                    await self._dispatch_message(message, payload)
+            await self._write_http_response(writer, 200, b"OK")
+            return
+
+        await self._write_http_response(writer, 404, b"")
+
+    async def _read_http_request(self, reader: asyncio.StreamReader) -> tuple[str, str, bytes]:
+        """Parse a minimal HTTP request from an inbound socket."""
+        request_line = await reader.readuntil(b"\r\n")
+        if not request_line:
+            raise ValueError("empty request")
+
+        parts = request_line.decode("iso-8859-1").strip().split()
+        if len(parts) != 3:
+            raise ValueError("invalid request line")
+
+        method, target, _ = parts
+        headers: dict[str, str] = {}
+        while True:
+            line = await reader.readuntil(b"\r\n")
+            if line in (b"\r\n", b"\n"):
+                break
+            name, _, value = line.decode("iso-8859-1").partition(":")
+            headers[name.strip().lower()] = value.strip()
+
+        content_length = int(headers.get("content-length", "0") or "0")
+        body = await reader.readexactly(content_length) if content_length else b""
+        return method.upper(), target, body
+
+    async def _write_http_response(
+        self,
+        writer: asyncio.StreamWriter,
+        status_code: int,
+        body: bytes,
+    ) -> None:
+        """Write a simple HTTP response to a client socket."""
+        status_text = {
+            200: "OK",
+            400: "Bad Request",
+            404: "Not Found",
+            500: "Internal Server Error",
+        }.get(status_code, "OK")
+        writer.write(f"HTTP/1.1 {status_code} {status_text}\r\nContent-Length: {len(body)}\r\n\r\n".encode())
+        if body:
+            writer.write(body)
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    async def stop(self) -> None:
+        """Close the underlying WAHA session and any local webhooks."""
+        if self._server is not None:
+            self._server.close()
+            await self._server.wait_closed()
+            self._server = None
         if self.session is not None and not self.session.is_closed:
             await self.session.aclose()
         logger.info("WAHA transport stopped")
