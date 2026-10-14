@@ -11,21 +11,16 @@ maintainers = [
 ]
 readme = "README.md"
 keywords = [
-    "async", "asyncio", "customerio", "messaing", "python3", "data-driven-emails", "push notifications",
-    "in-app messages", "SMS",
+    "async", "asyncio", "WhatsApp", "WAHA", "python3", "messaing",
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Natural Language :: English",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.14"
 dependencies = [
     "aiohttp>=3.9",
     "pyyaml>=6.0",
@@ -38,13 +33,13 @@ Repository = "https://github.com/akalex/courier"
 package = false  # application, not a distributable package
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.14"
 follow_imports = "skip"
 ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py314"
 exclude = ["tests"]
 
 [tool.ruff.lint]
