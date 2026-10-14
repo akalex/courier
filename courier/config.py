@@ -73,9 +73,7 @@ def load_config(path: str | os.PathLike[str] | None = None) -> dict[str, Any]:
     raw = _load_yaml(config_path)
     config: dict[str, Any] = dict(raw)
 
-    config["transport"] = str(
-        os.getenv("TRANSPORT", config.get("transport", "waha"))
-    ).strip().lower()
+    config["transport"] = str(os.getenv("TRANSPORT", config.get("transport", "waha"))).strip().lower()
     if not config["transport"]:
         raise ValueError("Config requires a transport name (for example: 'waha')")
 
