@@ -205,15 +205,77 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
 
    Courier creates the configured WAHA session and registers its `message` webhook automatically.
 
-8. To access the WAHA dashboard and Swagger without an SSH tunnel, put Nginx on the VM in front of WAHA. First, point a DNS name (for example, `waha.example.com`) to the VM's public IP. In the Oracle Cloud network security list or NSG, allow inbound TCP ports 80 and 443; also allow them in the VM's firewall if enabled. Do not open port 3000 publicly.
+8. To access the WAHA dashboard and Swagger without an SSH tunnel, put Nginx on the VM in front of WAHA. Allow inbound TCP ports 80 and 443 in the Oracle Cloud NSG or Security List and in the VM firewall if enabled. Port 80 is needed for Let's Encrypt validation; port 443 serves HTTPS. Do not open port 3000 publicly.
 
-   Install Nginx and Certbot with the package instructions for the VM's operating system. Create an Nginx HTTP virtual host (for example, `/etc/nginx/conf.d/waha.conf`) and replace `waha.example.com` with your DNS name:
+   Install Nginx:
+
+   ```bash
+   sudo apt update
+   sudo apt install -y nginx snapd
+   sudo systemctl enable --now nginx
+   sudo mkdir -p /var/www/certbot
+   sudo snap install --classic certbot
+   sudo ln -s /snap/bin/certbot /usr/local/bin/certbot
+   certbot --version
+   ```
+
+   Create an HTTP virtual host (for Ubuntu, `/etc/nginx/sites-available/waha`; on other distributions use the appropriate Nginx configuration directory). Replace `waha.example.com` with your public FQDN, or with the VM's public IP if using an IP certificate:
 
    ```nginx
    server {
        listen 80;
        listen [::]:80;
        server_name waha.example.com;
+
+       location ^~ /.well-known/acme-challenge/ {
+           root /var/www/certbot;
+           default_type text/plain;
+       }
+
+       location / {
+           return 301 https://$host$request_uri;
+       }
+   }
+   ```
+
+   On Ubuntu, enable the site and check/reload Nginx:
+
+   ```bash
+   sudo ln -s /etc/nginx/sites-available/waha /etc/nginx/sites-enabled/waha
+   sudo nginx -t
+   sudo systemctl reload nginx
+   ```
+
+   Obtain a certificate using **one** of the following methods:
+
+   - **Public FQDN:** The name must resolve publicly to this VM, and inbound port 80 must be reachable. Install Certbot using your OS's recommended method, then request a certificate:
+
+     ```bash
+     sudo certbot certonly --webroot -w /var/www/certbot -d waha.example.com
+     ```
+
+   - **Public IP only:** Install Certbot 5.4 or newer (for example, the current Certbot Snap package), then request a short-lived IP certificate. Replace the placeholder with the VM's actual public IP:
+
+     ```bash
+     sudo certbot certonly \
+       --webroot --webroot-path /var/www/certbot \
+       --preferred-profile shortlived \
+       --ip-address <VM_PUBLIC_IP>
+     ```
+
+     IP certificates are valid for about 160 hours. Certbot's Nginx plugin does not yet install IP certificates automatically, so configure the HTTPS server block below manually and ensure automatic renewal is working.
+
+   Run `sudo certbot certificates` and use the exact certificate and key paths it reports. Add this HTTPS server block to the same Nginx site. Replace `waha.example.com` with the public FQDN or actual public IP, and replace the certificate paths with those reported by Certbot:
+
+   ```nginx
+   server {
+       listen 443 ssl;
+       listen [::]:443 ssl;
+       server_name waha.example.com;
+
+       ssl_certificate /etc/letsencrypt/live/CERTIFICATE_NAME/fullchain.pem;
+       ssl_certificate_key /etc/letsencrypt/live/CERTIFICATE_NAME/privkey.pem;
+       ssl_protocols TLSv1.2 TLSv1.3;
 
        location / {
            proxy_pass http://127.0.0.1:3000;
@@ -233,17 +295,29 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
    }
    ```
 
-   Validate and reload Nginx, then use Certbot's Nginx plugin to issue a certificate and enable HTTPS:
+   Check and reload Nginx:
 
    ```bash
    sudo nginx -t
    sudo systemctl reload nginx
-   sudo certbot --nginx -d waha.example.com
    ```
 
-   Follow Certbot's prompts and enable the HTTP-to-HTTPS redirect if offered. Keep port 3000 bound to `127.0.0.1` as in the Compose file; expose only ports 80/443. Then open `https://waha.example.com/dashboard`, sign in with the generated dashboard credentials, connect using the generated WAHA API key, and scan the QR code. Swagger is at `https://waha.example.com/swagger`; use the generated Swagger username and password as well as the API key when prompted. This makes the WAHA administration interface publicly reachable, so use strong unique credentials and share the URL only with authorized users.
+   Install a Certbot deploy hook so Nginx reloads after either certificate type is renewed:
 
-   To find the chat IDs, open WAHA's Swagger UI at `https://waha.example.com/swagger`, authorize with the generated API key, then call `GET /api/default/chats` (replace `default` with the value of `WAHA_SESSION` if different). Find the source and destination groups by name and copy each `id` exactly as returned; group IDs typically end in `@g.us`. Update `SOURCE_CHAT_ID` and `TARGET_CHAT_ID` in `/opt/courier/.env` with those IDs, then apply them by restarting Courier:
+   ```bash
+   sudo install -d /etc/letsencrypt/renewal-hooks/deploy
+   sudo tee /etc/letsencrypt/renewal-hooks/deploy/reload-nginx >/dev/null <<'EOF'
+   #!/bin/sh
+   systemctl reload nginx
+   EOF
+   sudo chmod 755 /etc/letsencrypt/renewal-hooks/deploy/reload-nginx
+   ```
+
+   Confirm Certbot's automatic renewal timer is enabled and test renewal with `sudo certbot renew --dry-run`. This is especially important for IP certificates because of their short lifetime. Keep port 3000 bound to `127.0.0.1` as in the Compose file; expose only ports 80/443.
+
+   Open `https://waha.example.com/dashboard` (or `https://<VM_PUBLIC_IP>/dashboard` when using an IP certificate), sign in with the generated Dashboard credentials, connect using the generated WAHA API key, and scan the QR code. Swagger is at the same base URL followed by `/swagger`; use the generated Swagger username and password as well as the API key when prompted. This makes the WAHA administration interface publicly reachable, so use strong unique credentials and share the URL only with authorized users.
+
+   To find the chat IDs, open WAHA's Swagger UI at `https://waha.example.com/swagger` (or the IP URL), authorize with the generated API key, then call `GET /api/default/chats` (replace `default` with the value of `WAHA_SESSION` if different). Find the source and destination groups by name and copy each `id` exactly as returned; group IDs typically end in `@g.us`. Update `SOURCE_CHAT_ID` and `TARGET_CHAT_ID` in `/opt/courier/.env` with those IDs, then apply them by restarting Courier:
 
    ```bash
    cd /opt/courier
