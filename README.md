@@ -132,7 +132,7 @@ Image publishing does not deploy automatically. You do not need to clone this pr
    chmod 600 .env
    ```
 
-   This generates a new WAHA API key and dashboard login. Keep the generated `.env` private; Courier and WAHA use the same API key. Continue with the next step to add Courier's settings to this file.
+   This generates a new WAHA API key and dashboard/Swagger logins. Use strong, unique values for the API key and passwords. Keep the generated `.env` private; Courier and WAHA use the same API key. Continue with the next step to add Courier's settings to this file.
 4. Add Courier's settings to `.env`. You can temporarily use the values below for the chat IDs; replace them with the real IDs after linking WhatsApp and looking up your chats:
 
    ```dotenv
@@ -170,6 +170,8 @@ Image publishing does not deploy automatically. You do not need to clone this pr
          WAHA_API_KEY: ${WAHA_API_KEY:?Set WAHA_API_KEY in .env}
          WAHA_DASHBOARD_USERNAME: ${WAHA_DASHBOARD_USERNAME:?Set WAHA_DASHBOARD_USERNAME in .env}
          WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:?Set WAHA_DASHBOARD_PASSWORD in .env}
+         WHATSAPP_SWAGGER_USERNAME: ${WHATSAPP_SWAGGER_USERNAME:?Set WHATSAPP_SWAGGER_USERNAME in .env}
+         WHATSAPP_SWAGGER_PASSWORD: ${WHATSAPP_SWAGGER_PASSWORD:?Set WHATSAPP_SWAGGER_PASSWORD in .env}
 
      courier:
        image: ghcr.io/akalex/courier:${COURIER_TAG:-latest}
@@ -199,9 +201,47 @@ Image publishing does not deploy automatically. You do not need to clone this pr
    docker compose up -d
    ```
 
-   Courier creates the configured WAHA session and registers its `message` webhook automatically. To link WhatsApp the first time, open WAHA's dashboard through an SSH tunnel (for example, `ssh -L 3000:127.0.0.1:3000 user@VM`), visit `http://localhost:3000/dashboard`, sign in with the generated dashboard credentials, connect with the generated API key, and scan the QR code.
+   Courier creates the configured WAHA session and registers its `message` webhook automatically.
 
-   To find the chat IDs, open WAHA's Swagger UI at `http://localhost:3000/swagger`, authorize with the generated API key, then call `GET /api/default/chats` (replace `default` with the value of `WAHA_SESSION` if different). Find the source and destination groups by name and copy each `id` exactly as returned; group IDs typically end in `@g.us`. Update `SOURCE_CHAT_ID` and `TARGET_CHAT_ID` in `/opt/courier/.env` with those IDs, then apply them by restarting Courier:
+8. To access the WAHA dashboard and Swagger without an SSH tunnel, put Nginx on the VM in front of WAHA. First, point a DNS name (for example, `waha.example.com`) to the VM's public IP. In the Oracle Cloud network security list or NSG, allow inbound TCP ports 80 and 443; also allow them in the VM's firewall if enabled. Do not open port 3000 publicly.
+
+   Install Nginx and Certbot with the package instructions for the VM's operating system. Create an Nginx HTTP virtual host (for example, `/etc/nginx/conf.d/waha.conf`) and replace `waha.example.com` with your DNS name:
+
+   ```nginx
+   server {
+       listen 80;
+       listen [::]:80;
+       server_name waha.example.com;
+
+       location / {
+           proxy_pass http://127.0.0.1:3000;
+           proxy_http_version 1.1;
+           proxy_set_header Upgrade $http_upgrade;
+           proxy_set_header Connection "upgrade";
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+           proxy_set_header X-Forwarded-Proto $scheme;
+           proxy_set_header X-Forwarded-Ssl on;
+           proxy_buffering off;
+           client_max_body_size 0;
+           proxy_read_timeout 36000s;
+           proxy_redirect off;
+       }
+   }
+   ```
+
+   Validate and reload Nginx, then use Certbot's Nginx plugin to issue a certificate and enable HTTPS:
+
+   ```bash
+   sudo nginx -t
+   sudo systemctl reload nginx
+   sudo certbot --nginx -d waha.example.com
+   ```
+
+   Follow Certbot's prompts and enable the HTTP-to-HTTPS redirect if offered. Keep port 3000 bound to `127.0.0.1` as in the Compose file; expose only ports 80/443. Then open `https://waha.example.com/dashboard`, sign in with the generated dashboard credentials, connect using the generated WAHA API key, and scan the QR code. Swagger is at `https://waha.example.com/swagger`; use the generated Swagger username and password as well as the API key when prompted. This makes the WAHA administration interface publicly reachable, so use strong unique credentials and share the URL only with authorized users.
+
+   To find the chat IDs, open WAHA's Swagger UI at `https://waha.example.com/swagger`, authorize with the generated API key, then call `GET /api/default/chats` (replace `default` with the value of `WAHA_SESSION` if different). Find the source and destination groups by name and copy each `id` exactly as returned; group IDs typically end in `@g.us`. Update `SOURCE_CHAT_ID` and `TARGET_CHAT_ID` in `/opt/courier/.env` with those IDs, then apply them by restarting Courier:
 
    ```bash
    cd /opt/courier
@@ -210,7 +250,7 @@ Image publishing does not deploy automatically. You do not need to clone this pr
 
 To upgrade later, change `COURIER_TAG` in `.env` to `latest` or a commit SHA, then run `docker compose pull courier && docker compose up -d courier`. Using a commit-SHA tag makes rollbacks reproducible. If you do have repository access on the VM, cloning it is also an option; run Compose from the directory containing `docker-compose.yml`.
 
-Runtime credentials stay on the VM in the ignored `.env` file, not in Git. WAHA's web UI is bound to the VM's loopback interface; reach it through an SSH port forward rather than exposing port `3000` publicly.
+Runtime credentials stay on the VM in the ignored `.env` file, not in Git. WAHA's web UI is bound to the VM's loopback interface; use the HTTPS Nginx proxy for browser access and never expose port `3000` publicly.
 
 The WAHA adapter listens for inbound webhook events on `/webhook` using `LISTEN_PORT`. Courier provisions the session webhook to the `courier` service over the private Compose network.
 
