@@ -85,6 +85,18 @@ async def main() -> None:
         raise ValueError(f"Unknown transport '{transport_name}'. Available: {', '.join(sorted(TRANSPORTS))}")
 
     transport = builder(config)
+    filter_config = config["filters"]
+    keywords = filter_config["keywords"]
+    senders = filter_config["senders"]
+    if keywords or senders:
+        logger.info(
+            "Message filters: keywords=%s senders=%s (OR)",
+            keywords or "disabled",
+            senders or "disabled",
+        )
+    else:
+        logger.info("Message filters: none (all messages from the source chat are eligible)")
+
     forwarder = Forwarder(
         source_chat_id=config["source_chat_id"],
         target_chat_id=config["target_chat_id"],
