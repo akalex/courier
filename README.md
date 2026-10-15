@@ -120,8 +120,8 @@ Image publishing does not deploy automatically. You do not need to clone this pr
 3. Create a deployment directory and generate WAHA's production credentials:
 
    ```bash
-   mkdir -p ~/courier
-   cd ~/courier
+   mkdir -p /opt/courier
+   cd /opt/courier
    docker run --rm -v "$PWD":/app/env devlikeapro/waha init-waha /app/env
    chmod 600 .env
    ```
