@@ -50,6 +50,8 @@ filters:
     - "alice@example.com"
 ```
 
+Each configured keyword is matched as a case-insensitive substring of the message text or caption. If keywords are configured, a message must contain at least one of them to pass the keyword filter; media without a matching caption is not forwarded. Sender filters can also be configured.
+
 Supported environment variables:
 
 - `TRANSPORT`
@@ -141,8 +143,11 @@ Image publishing does not deploy automatically. You do not need to clone this pr
        restart: unless-stopped
        depends_on:
          - waha
+       volumes:
+         - ./config.yaml:/app/config.yaml:ro
        environment:
          TRANSPORT: waha
+         CONFIG_PATH: /app/config.yaml
          WAHA_URL: http://waha:3000
          WAHA_API_KEY: ${WAHA_API_KEY:-}
          WAHA_SESSION: ${WAHA_SESSION:-default}
@@ -165,7 +170,17 @@ Image publishing does not deploy automatically. You do not need to clone this pr
    ```
 
    Replace the example chat IDs and fill in the real WAHA API key. Keep `.env` private on the VM.
-5. Start WAHA, then pull and start Courier:
+5. Create `config.yaml` in the same directory (the Compose file mounts it into Courier). This example forwards messages or media whose text/caption contains `urgent` or `alert`:
+
+   ```yaml
+   filters:
+     keywords:
+       - urgent
+       - alert
+   ```
+
+   Keywords are case-insensitive substrings; any one matching keyword is sufficient. To disable keyword filtering, use an empty config file (`{}`) instead.
+6. Start WAHA, then pull and start Courier:
 
    ```bash
    docker compose up -d waha
