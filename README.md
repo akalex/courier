@@ -122,17 +122,23 @@ Image publishing does not deploy automatically. You do not need to clone this pr
    ```bash
    mkdir -p /opt/courier
    cd /opt/courier
-   docker run --rm -v "$PWD":/app/env devlikeapro/waha init-waha /app/env
+   ```
+
+   Generate WAHA's credentials in the deployment directory. If an incomplete `.env` already exists, back it up first; `--force` replaces the whole file:
+
+   ```bash
+   if [ -f .env ]; then cp -p .env .env.backup; fi
+   docker run --rm -v "$PWD":/app/env devlikeapro/waha init-waha /app/env --force
    chmod 600 .env
    ```
 
-   The generated `.env` includes the WAHA API key and dashboard credentials. Keep it private; Courier and WAHA use the same API key.
-4. Add Courier's settings to `.env`, replacing the example chat IDs:
+   This generates a new WAHA API key and dashboard login. Keep the generated `.env` private; Courier and WAHA use the same API key. Continue with the next step to add Courier's settings to this file.
+4. Add Courier's settings to `.env`. You can temporarily use the values below for the chat IDs; replace them with the real IDs after linking WhatsApp and looking up your chats:
 
    ```dotenv
    WAHA_SESSION=default
-   SOURCE_CHAT_ID=120363123456789012@g.us
-   TARGET_CHAT_ID=120363987654321098@g.us
+   SOURCE_CHAT_ID=replace-after-linking
+   TARGET_CHAT_ID=replace-after-linking
    LOG_LEVEL=INFO
    LISTEN_PORT=8000
    COURIER_TAG=latest
@@ -194,6 +200,13 @@ Image publishing does not deploy automatically. You do not need to clone this pr
    ```
 
    Courier creates the configured WAHA session and registers its `message` webhook automatically. To link WhatsApp the first time, open WAHA's dashboard through an SSH tunnel (for example, `ssh -L 3000:127.0.0.1:3000 user@VM`), visit `http://localhost:3000/dashboard`, sign in with the generated dashboard credentials, connect with the generated API key, and scan the QR code.
+
+   To find the chat IDs, open WAHA's Swagger UI at `http://localhost:3000/swagger`, authorize with the generated API key, then call `GET /api/default/chats` (replace `default` with the value of `WAHA_SESSION` if different). Find the source and destination groups by name and copy each `id` exactly as returned; group IDs typically end in `@g.us`. Update `SOURCE_CHAT_ID` and `TARGET_CHAT_ID` in `/opt/courier/.env` with those IDs, then apply them by restarting Courier:
+
+   ```bash
+   cd /opt/courier
+   docker compose up -d courier
+   ```
 
 To upgrade later, change `COURIER_TAG` in `.env` to `latest` or a commit SHA, then run `docker compose pull courier && docker compose up -d courier`. Using a commit-SHA tag makes rollbacks reproducible. If you do have repository access on the VM, cloning it is also an option; run Compose from the directory containing `docker-compose.yml`.
 
