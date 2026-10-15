@@ -109,6 +109,8 @@ GitHub Actions runs CI on pushes and pull requests. After CI passes on `main`, i
 
 Image publishing does not deploy automatically. You do not need to clone this private repository on the VM: deploy the published image using a Compose file created there.
 
+The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image includes an ARM64 build and Docker selects it automatically. WAHA's `latest` image is x86-only, so use WAHA's ARM image tag, `devlikeapro/waha:arm`, on A1 instances.
+
 1. Install Docker with the Compose plugin on the Oracle VM.
 2. If the GHCR package is private, create a GitHub token with `read:packages` and authenticate Docker on the VM. If the package is public, skip this step:
 
@@ -128,7 +130,7 @@ Image publishing does not deploy automatically. You do not need to clone this pr
 
    ```bash
    if [ -f .env ]; then cp -p .env .env.backup; fi
-   docker run --rm -v "$PWD":/app/env devlikeapro/waha init-waha /app/env --force
+   docker run --rm -v "$PWD":/app/env devlikeapro/waha:arm init-waha /app/env --force
    chmod 600 .env
    ```
 
@@ -160,7 +162,7 @@ Image publishing does not deploy automatically. You do not need to clone this pr
    cat > docker-compose.yml <<'EOF'
    services:
      waha:
-       image: devlikeapro/waha:latest
+       image: devlikeapro/waha:arm
        restart: unless-stopped
        ports:
          - "127.0.0.1:3000:3000"
