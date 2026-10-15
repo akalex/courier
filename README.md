@@ -207,6 +207,23 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
 
 8. To access the WAHA dashboard and Swagger without an SSH tunnel, put Nginx on the VM in front of WAHA. Allow inbound TCP ports 80 and 443 in the Oracle Cloud NSG or Security List and in the VM firewall if enabled. Port 80 is needed for Let's Encrypt validation; port 443 serves HTTPS. Do not open port 3000 publicly.
 
+   If the VM uses iptables and its `INPUT` chain rejects other incoming connections, add allow rules for HTTP and HTTPS. These commands insert the rules before existing rules (including a final REJECT); they do not alter SSH access:
+
+   ```bash
+   sudo iptables -I INPUT 1 -p tcp --dport 80 -j ACCEPT
+   sudo iptables -I INPUT 1 -p tcp --dport 443 -j ACCEPT
+   sudo iptables -L INPUT -n --line-numbers
+   ```
+
+   Confirm both ACCEPT rules appear before any REJECT rule. These rules are runtime-only unless saved. On Ubuntu, install `iptables-persistent` and save the current rules so they survive a reboot:
+
+   ```bash
+   sudo apt install -y iptables-persistent
+   sudo netfilter-persistent save
+   ```
+
+   If the package installer asks whether to save the current IPv4/IPv6 rules, choose to save them only after confirming the current rules retain SSH access. Do not flush or replace the firewall ruleset. Apply equivalent IPv6 rules only if the VM is publicly reachable over IPv6. OCI ingress rules are still required; host iptables rules do not replace them.
+
    Install Nginx:
 
    ```bash
