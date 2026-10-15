@@ -5,20 +5,26 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
     volumes:
-      - ./waha-data:/app/env
+      - ./waha-data:/app/.sessions
     environment:
-      WAHA_SESSION: default
+      WAHA_API_KEY: ${WAHA_API_KEY:?Set WAHA_API_KEY in .env}
+      WAHA_DASHBOARD_USERNAME: ${WAHA_DASHBOARD_USERNAME:?Set WAHA_DASHBOARD_USERNAME in .env}
+      WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:?Set WAHA_DASHBOARD_PASSWORD in .env}
 
   courier:
     image: ghcr.io/akalex/courier:${COURIER_TAG:-latest}
     restart: unless-stopped
     depends_on:
       - waha
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
     environment:
       TRANSPORT: waha
+      CONFIG_PATH: /app/config.yaml
       WAHA_URL: http://waha:3000
-      WAHA_API_KEY: ${WAHA_API_KEY:-}
+      WAHA_API_KEY: ${WAHA_API_KEY:?Set WAHA_API_KEY in .env}
       WAHA_SESSION: ${WAHA_SESSION:-default}
+      WHATSAPP_HOOK_URL: http://courier:8000/webhook
       SOURCE_CHAT_ID: ${SOURCE_CHAT_ID}
       TARGET_CHAT_ID: ${TARGET_CHAT_ID}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}

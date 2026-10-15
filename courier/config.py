@@ -93,6 +93,10 @@ def load_config(path: str | os.PathLike[str] | None = None) -> dict[str, Any]:
         "WAHA_SESSION",
         config.get("waha_session") or config.get("waha", {}).get("session") or "default",
     )
+    config["webhook_url"] = os.getenv(
+        "WHATSAPP_HOOK_URL",
+        config.get("webhook_url") or "http://localhost:8000/webhook",
+    )
 
     filters_cfg = config.get("filters") or {}
     if not isinstance(filters_cfg, dict):

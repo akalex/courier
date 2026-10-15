@@ -28,3 +28,13 @@ def test_invalid_config_fails_fast(tmp_path):
 
     with pytest.raises(ValueError):
         load_config(path)
+
+
+def test_webhook_url_can_be_configured_from_environment(tmp_path, monkeypatch):
+    path = tmp_path / "config.yaml"
+    path.write_text("source_chat_id: source\ntarget_chat_id: target\n", encoding="utf-8")
+    monkeypatch.setenv("WHATSAPP_HOOK_URL", "http://courier:8000/webhook")
+
+    cfg = load_config(path)
+
+    assert cfg["webhook_url"] == "http://courier:8000/webhook"

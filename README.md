@@ -117,16 +117,41 @@ Image publishing does not deploy automatically. You do not need to clone this pr
    ```
 
    Enter the token when prompted for the password; do not put it in the Compose file or `.env`.
-3. Create a deployment directory and a `docker-compose.yml` file:
+3. Create a deployment directory and generate WAHA's production credentials:
 
    ```bash
    mkdir -p ~/courier
    cd ~/courier
+   docker run --rm -v "$PWD":/app/env devlikeapro/waha init-waha /app/env
+   chmod 600 .env
    ```
 
-   Put this in `docker-compose.yml`:
+   The generated `.env` includes the WAHA API key and dashboard credentials. Keep it private; Courier and WAHA use the same API key.
+4. Add Courier's settings to `.env`, replacing the example chat IDs:
+
+   ```dotenv
+   WAHA_SESSION=default
+   SOURCE_CHAT_ID=120363123456789012@g.us
+   TARGET_CHAT_ID=120363987654321098@g.us
+   LOG_LEVEL=INFO
+   LISTEN_PORT=8000
+   COURIER_TAG=latest
+   ```
+
+5. Create `config.yaml` in the same directory (the Compose file mounts it into Courier). This example forwards messages or media whose text/caption contains `urgent` or `alert`:
 
    ```yaml
+   filters:
+     keywords:
+       - urgent
+       - alert
+   ```
+
+   Keywords are case-insensitive substrings; any one matching keyword is sufficient. To disable keyword filtering, use an empty config file (`{}`) instead.
+6. Create `docker-compose.yml` in the same directory:
+
+   ```bash
+   cat > docker-compose.yml <<'EOF'
    services:
      waha:
        image: devlikeapro/waha:latest
@@ -134,9 +159,11 @@ Image publishing does not deploy automatically. You do not need to clone this pr
        ports:
          - "127.0.0.1:3000:3000"
        volumes:
-         - ./waha-data:/app/env
+         - ./waha-data:/app/.sessions
        environment:
-         WAHA_SESSION: ${WAHA_SESSION:-default}
+         WAHA_API_KEY: ${WAHA_API_KEY:?Set WAHA_API_KEY in .env}
+         WAHA_DASHBOARD_USERNAME: ${WAHA_DASHBOARD_USERNAME:?Set WAHA_DASHBOARD_USERNAME in .env}
+         WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:?Set WAHA_DASHBOARD_PASSWORD in .env}
 
      courier:
        image: ghcr.io/akalex/courier:${COURIER_TAG:-latest}
@@ -149,50 +176,30 @@ Image publishing does not deploy automatically. You do not need to clone this pr
          TRANSPORT: waha
          CONFIG_PATH: /app/config.yaml
          WAHA_URL: http://waha:3000
-         WAHA_API_KEY: ${WAHA_API_KEY:-}
+         WAHA_API_KEY: ${WAHA_API_KEY:?Set WAHA_API_KEY in .env}
          WAHA_SESSION: ${WAHA_SESSION:-default}
+         WHATSAPP_HOOK_URL: http://courier:8000/webhook
          SOURCE_CHAT_ID: ${SOURCE_CHAT_ID}
          TARGET_CHAT_ID: ${TARGET_CHAT_ID}
          LOG_LEVEL: ${LOG_LEVEL:-INFO}
          LISTEN_PORT: ${LISTEN_PORT:-8000}
+   EOF
    ```
 
-4. Create a `.env` file in the same directory with real runtime values:
-
-   ```dotenv
-   WAHA_API_KEY=
-   WAHA_SESSION=default
-   SOURCE_CHAT_ID=120363123456789012@g.us
-   TARGET_CHAT_ID=120363987654321098@g.us
-   LOG_LEVEL=INFO
-   LISTEN_PORT=8000
-   COURIER_TAG=latest
-   ```
-
-   Replace the example chat IDs and fill in the real WAHA API key. Keep `.env` private on the VM.
-5. Create `config.yaml` in the same directory (the Compose file mounts it into Courier). This example forwards messages or media whose text/caption contains `urgent` or `alert`:
-
-   ```yaml
-   filters:
-     keywords:
-       - urgent
-       - alert
-   ```
-
-   Keywords are case-insensitive substrings; any one matching keyword is sufficient. To disable keyword filtering, use an empty config file (`{}`) instead.
-6. Start WAHA, then pull and start Courier:
+7. Start both services:
 
    ```bash
-   docker compose up -d waha
-   docker compose pull courier
-   docker compose up -d courier
+   docker compose pull
+   docker compose up -d
    ```
+
+   Courier creates the configured WAHA session and registers its `message` webhook automatically. To link WhatsApp the first time, open WAHA's dashboard through an SSH tunnel (for example, `ssh -L 3000:127.0.0.1:3000 user@VM`), visit `http://localhost:3000/dashboard`, sign in with the generated dashboard credentials, connect with the generated API key, and scan the QR code.
 
 To upgrade later, change `COURIER_TAG` in `.env` to `latest` or a commit SHA, then run `docker compose pull courier && docker compose up -d courier`. Using a commit-SHA tag makes rollbacks reproducible. If you do have repository access on the VM, cloning it is also an option; run Compose from the directory containing `docker-compose.yml`.
 
 Runtime credentials stay on the VM in the ignored `.env` file, not in Git. WAHA's web UI is bound to the VM's loopback interface; reach it through an SSH port forward rather than exposing port `3000` publicly.
 
-> The WAHA adapter listens for inbound webhook events on the local `/webhook` endpoint using `LISTEN_PORT` and forwards them through the configured callback. Configure WAHA to send incoming messages to this endpoint so the relay can operate end-to-end.
+The WAHA adapter listens for inbound webhook events on `/webhook` using `LISTEN_PORT`. Courier provisions the session webhook to the `courier` service over the private Compose network.
 
 ## Project structure
 

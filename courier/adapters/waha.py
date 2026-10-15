@@ -5,6 +5,7 @@ import base64
 import json
 import logging
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -40,6 +41,25 @@ def _coalesce(*values: Any) -> str:
         if value not in (None, ""):
             return str(value)
     return ""
+
+
+def _with_message_webhook(config: dict[str, Any], webhook_url: str) -> list[dict[str, Any]]:
+    webhooks = config.get("webhooks") or []
+    if not isinstance(webhooks, list) or not all(isinstance(hook, dict) for hook in webhooks):
+        raise ValueError("WAHA returned an invalid session webhook config")
+
+    configured_webhooks = [dict(webhook) for webhook in webhooks]
+    for webhook in configured_webhooks:
+        if webhook.get("url") == webhook_url:
+            events = webhook.get("events") or []
+            if not isinstance(events, list):
+                raise ValueError("WAHA returned an invalid webhook event config")
+            if "message" not in events:
+                webhook["events"] = [*events, "message"]
+            return configured_webhooks
+
+    configured_webhooks.append({"url": webhook_url, "events": ["message"]})
+    return configured_webhooks
 
 
 class WAHATransport:
@@ -79,7 +99,7 @@ class WAHATransport:
         self._on_message = on_message
         headers = {"User-Agent": "courier/0.1.0"}
         if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+            headers["X-Api-Key"] = self.api_key
         self.session = httpx.AsyncClient(
             base_url=self.base_url,
             headers=headers,
@@ -89,7 +109,62 @@ class WAHATransport:
         if self._server is None:
             self._server = await asyncio.start_server(self._handle_http_request, "0.0.0.0", self.listen_port)
 
+        await self._ensure_waha_session()
         logger.info("WAHA transport started for %s", self.base_url)
+
+    async def _ensure_waha_session(self) -> None:
+        """Create or configure the WAHA session and enable message webhooks."""
+        if self.session is None:
+            raise RuntimeError("WAHA transport is not started")
+
+        session_path = f"/api/sessions/{quote(self.session_name, safe='')}"
+        for attempt in range(12):
+            try:
+                await self._configure_waha_session(session_path)
+                return
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code < 500 or attempt == 11:
+                    raise
+            except httpx.TransportError:
+                if attempt == 11:
+                    raise
+            await asyncio.sleep(5)
+
+    async def _configure_waha_session(self, session_path: str) -> None:
+        if self.session is None:
+            raise RuntimeError("WAHA transport is not started")
+
+        response = await self.session.get(session_path)
+        if response.status_code == 404:
+            response = await self.session.post(
+                "/api/sessions/",
+                json={
+                    "name": self.session_name,
+                    "config": {"webhooks": [{"url": self.webhook_url, "events": ["message"]}]},
+                },
+            )
+            response.raise_for_status()
+            status = "STOPPED"
+        else:
+            response.raise_for_status()
+            session_data = response.json()
+            if not isinstance(session_data, dict):
+                raise ValueError("WAHA returned an invalid session response")
+            config = session_data.get("config") or {}
+            if not isinstance(config, dict):
+                raise ValueError("WAHA returned an invalid session config")
+            config["webhooks"] = _with_message_webhook(config, self.webhook_url)
+            response = await self.session.put(
+                session_path,
+                json={"name": self.session_name, "config": config},
+            )
+            response.raise_for_status()
+            status = str(session_data.get("status", "")).upper()
+
+        if status not in {"WORKING", "STARTING", "SCAN_QR"}:
+            response = await self.session.post(f"{session_path}/start")
+            response.raise_for_status()
+        logger.info("Configured WAHA session %s webhook for %s", self.session_name, self.webhook_url)
 
     async def _handle_http_request(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         """Accept inbound WAHA webhook payloads and invoke the configured callback."""
