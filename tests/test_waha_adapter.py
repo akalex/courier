@@ -147,6 +147,110 @@ async def test_send_raises_for_waha_error_response():
 
 
 @pytest.mark.asyncio
+async def test_hydrate_media_rewrites_localhost_url_to_waha_service():
+    requested_urls = []
+
+    async def handler(request):
+        requested_urls.append(str(request.url))
+        return httpx.Response(200, content=b"video-data")
+
+    transport = WAHATransport(
+        session_name="default",
+        base_url="http://waha:3000",
+        api_key="secret",
+        webhook_url="http://courier:8000/webhook",
+    )
+    message = transport._message_from_payload(
+        {
+            "event": "message",
+            "payload": {
+                "id": "message-1",
+                "chatId": "group@g.us",
+                "fromMe": False,
+                "body": "video caption",
+                "media": {"url": "http://localhost:3000/api/files/default/message-1.mp4"},
+            },
+        }
+    )
+    assert message is not None
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        transport.session = client
+        hydrated = await transport._hydrate_media(
+            message,
+            {"media": {"url": "http://localhost:3000/api/files/default/message-1.mp4"}},
+        )
+
+    assert requested_urls == ["http://waha:3000/api/files/default/message-1.mp4"]
+    assert hydrated.text == "video caption"
+    assert hydrated.attachments[0].data == b"video-data"
+
+
+@pytest.mark.asyncio
+async def test_hydrate_media_failure_keeps_text_without_empty_attachment():
+    async def handler(request):
+        return httpx.Response(404, request=request)
+
+    transport = WAHATransport(
+        session_name="default",
+        base_url="http://waha:3000",
+        api_key="secret",
+        webhook_url="http://courier:8000/webhook",
+    )
+    message = transport._message_from_payload(
+        {
+            "event": "message",
+            "payload": {
+                "id": "message-2",
+                "chatId": "group@g.us",
+                "fromMe": False,
+                "body": "plain text",
+                "media": {"url": "http://localhost:3000/api/files/default/message-2.mp4"},
+            },
+        }
+    )
+    assert message is not None
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        transport.session = client
+        hydrated = await transport._hydrate_media(
+            message,
+            {"media": {"url": "http://localhost:3000/api/files/default/message-2.mp4"}},
+        )
+
+    assert hydrated.text == "plain text"
+    assert hydrated.attachments == ()
+
+
+@pytest.mark.asyncio
+async def test_hydrate_media_absent_keeps_text_without_attachment():
+    transport = WAHATransport(
+        session_name="default",
+        base_url="http://waha:3000",
+        api_key="secret",
+        webhook_url="http://courier:8000/webhook",
+    )
+    message = transport._message_from_payload(
+        {
+            "event": "message",
+            "payload": {
+                "id": "message-3",
+                "chatId": "group@g.us",
+                "fromMe": False,
+                "body": "plain text",
+                "media": {},
+            },
+        }
+    )
+    assert message is not None
+
+    hydrated = await transport._hydrate_media(message, {"media": {}})
+
+    assert hydrated.text == "plain text"
+    assert hydrated.attachments == ()
+
+
+@pytest.mark.asyncio
 async def test_start_sets_api_key_header_and_configures_session(monkeypatch):
     captured = {}
 

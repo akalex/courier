@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import logging
+from dataclasses import replace
 from typing import Any
 from urllib.parse import quote
 
@@ -356,27 +357,38 @@ class WAHATransport:
                     )
                     for attachment in message.attachments
                 )
-                return Message(
-                    id=message.id,
-                    chat_id=message.chat_id,
-                    sender_id=message.sender_id,
-                    sender_name=message.sender_name,
-                    text=message.text,
-                    attachments=attachments,
-                )
-            return message
+                return replace(message, attachments=attachments)
+            return replace(message, attachments=())
+
+        resolved_media_url = httpx.URL(media_url)
+        base_url = httpx.URL(self.base_url)
+        if resolved_media_url.host in {"localhost", "127.0.0.1", "::1"}:
+            resolved_media_url = resolved_media_url.copy_with(
+                scheme=base_url.scheme,
+                host=base_url.host,
+                port=base_url.port,
+            )
 
         try:
             if self.session is None:
-                return message
+                return replace(message, attachments=())
             response = await self.session.get(
-                media_url,
+                str(resolved_media_url),
                 timeout=httpx.Timeout(20.0, connect=10.0, read=20.0),
             )
+            response.raise_for_status()
             data = response.content
-        except Exception:
-            logger.warning("Failed to download WAHA media for message id=%s from %s", message.id, media_url)
-            return message
+            if not data:
+                logger.warning("WAHA returned empty media for message id=%s; forwarding text only", message.id)
+                return replace(message, attachments=())
+        except httpx.HTTPError:
+            logger.warning(
+                "Failed to download WAHA media for message id=%s from %s; forwarding text only",
+                message.id,
+                resolved_media_url,
+                exc_info=True,
+            )
+            return replace(message, attachments=())
 
         attachment = (
             message.attachments[0]
@@ -388,14 +400,7 @@ class WAHATransport:
             )
         )
         attachments = (Attachment(attachment.mime_type, attachment.filename, data),)
-        return Message(
-            id=message.id,
-            chat_id=message.chat_id,
-            sender_id=message.sender_id,
-            sender_name=message.sender_name,
-            text=message.text,
-            attachments=attachments,
-        )
+        return replace(message, attachments=attachments)
 
     def _message_from_payload(self, payload: Any) -> Message | None:
         """Parse a WAHA event payload into the normalized Courier message model.
