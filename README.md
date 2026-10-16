@@ -1,5 +1,7 @@
 # Courier
 
+![Courier logo](./assets/courier-logo.svg)
+
 Courier is an asynchronous message forwarder. Each Courier process watches one WhatsApp source chat, applies optional sender and keyword filters, and relays eligible messages to one target chat on WhatsApp or Matrix (including Element).
 
 Courier receives WhatsApp messages from WAHA over its HTTP webhook and sends them through a separately configured destination adapter. One process/container manages one source-to-destination route.
