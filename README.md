@@ -19,7 +19,7 @@ Courier communicates with WAHA over its HTTP API and receives messages through a
 ## Features
 
 - Forward message text and supported media from one WhatsApp chat to another
-- Filter by sender ID/name and/or keyword matches
+- Filter by sender ID/name and/or included keywords, with optional excluded keywords
 - Deduplicate up to 1,000 successfully forwarded message IDs in memory
 - Retry failed webhook deliveries through WAHA's configured retry policy
 - Run locally or as a container, including on ARM64 and x86-64
@@ -61,7 +61,8 @@ If WAHA runs on another VM, both paths must be routable between the machines. Pr
 - If WAHA reports that inline WEBJS video sending requires the `devlikeapro/waha:chrome` image, Courier retries the video as a file. This is useful with WAHA's ARM image, where inline WEBJS video is not supported.
 - Media download failures, unsafe media URLs, and empty media do not discard the text/caption. An attachment larger than `max_attachment_size` is skipped; Courier sends the text/caption instead. The size limit defaults to 20 MiB. Media is downloaded before this forwarding-size check, so the setting does not limit download bandwidth or peak download memory.
 - Media URLs are fetched only when they resolve to the configured WAHA origin. Loopback media URLs are rewritten to the configured WAHA host. This prevents Courier's WAHA API-key header from being sent to an unrelated host; URLs on another hostname/origin are skipped.
-- Keyword filters search the message text/caption using case-insensitive substring matching. A keyword filter accepts a message if any configured keyword matches.
+- Included keywords search the message text/caption using case-insensitive substring matching. A keyword filter accepts a message if any configured keyword matches.
+- Excluded keywords are also case-insensitive substring matches against the text/caption. If any excluded keyword appears, the message is rejected even when it matches an included keyword or sender. Exclusions are vetoes; included keywords and sender criteria retain their OR behavior.
 - Sender filters match the normalized sender ID or sender name. Normalization is case-insensitive and strips a leading `+` and any `@...` suffix.
 - If both keyword and sender filters are configured, they are combined with **OR**: matching either filter is sufficient. With no filters configured, every message from the source chat is eligible. A media-only message has no matching keyword text, so it passes a keyword filter only if there is a matching caption.
 - Courier ignores messages sent by its linked WhatsApp account by default. Enable `include_from_me` only when needed, and keep source and target chat IDs different to avoid forwarding loops.
@@ -93,6 +94,9 @@ filters:
   keywords:
     - "vip"
     - "alert"
+  exclude_keywords:
+    - "city"
+    - "New York"
   senders:
     - "+1234567890"
     - "alice@example.com"
@@ -111,13 +115,14 @@ filters:
 | Courier webhook URL registered in WAHA | `WHATSAPP_HOOK_URL` | `webhook_url` | `http://localhost:8000/webhook` |
 | Include messages sent by the linked account | `INCLUDE_FROM_ME` | `include_from_me` | `false`; accepts true/false, yes/no, on/off, or 1/0 |
 | Maximum outgoing attachment size in bytes | — | `max_attachment_size` | `20971520` (20 MiB); must be positive |
-| Keyword filter values | — | `filters.keywords` | Empty; accepts a YAML list or comma-separated string |
+| Required/include keyword values | — | `filters.keywords` | Empty; accepts a YAML list or comma-separated string; any one match satisfies the keyword criterion |
+| Excluded keyword values | — | `filters.exclude_keywords` | Empty; accepts a YAML list or comma-separated string; any one match rejects the message |
 | Sender filter values | — | `filters.senders` | Empty; accepts a YAML list or comma-separated string |
 | Config file path | `CONFIG_PATH` | — | `config.yaml` |
 
 `WHATSAPP_HOOK_URL` is the URL WAHA calls to deliver events; it must be reachable from the WAHA container/network. This is distinct from `WAHA_URL`, which Courier uses to call WAHA. For separate Courier containers, use a unique service name or otherwise unique webhook URL for each instance. `LISTEN_PORT` is the port Courier binds inside its container; separate containers can use the same internal port.
 
-`max_attachment_size` has no environment-variable override. Filter values are configured in YAML. Unknown transport names and invalid typed settings fail during startup. If `INCLUDE_FROM_ME` is true, source and target chat IDs must differ.
+`max_attachment_size` and filter values are configured in YAML; they have no environment-variable overrides. Unknown transport names and invalid typed settings fail during startup. If `INCLUDE_FROM_ME` is true, source and target chat IDs must differ. Filter order/combination is: the message must pass at least one configured include criterion (keyword or sender), if any are configured, and must not match any excluded keyword. When only exclusions are configured, all messages without excluded terms are eligible.
 
 ## Run locally
 

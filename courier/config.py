@@ -12,6 +12,7 @@ import yaml
 @dataclass(frozen=True, slots=True)
 class FilterSettings:
     keywords: tuple[str, ...]
+    exclude_keywords: tuple[str, ...]
     senders: tuple[str, ...]
 
 
@@ -170,6 +171,7 @@ def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
     include_from_me = _coerce_bool(include_from_me_value, name="include_from_me")
     filters = FilterSettings(
         keywords=tuple(_coerce_list(filters_cfg.get("keywords"), name="filters.keywords")),
+        exclude_keywords=tuple(_coerce_list(filters_cfg.get("exclude_keywords"), name="filters.exclude_keywords")),
         senders=tuple(_coerce_list(filters_cfg.get("senders"), name="filters.senders")),
     )
 

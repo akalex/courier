@@ -27,6 +27,18 @@ class KeywordFilter(_FilterBase):
         return any(keyword in haystack for keyword in self.keywords)
 
 
+class ExcludeKeywordFilter(_FilterBase):
+    """Reject messages whose text contains any configured excluded keyword."""
+
+    def __init__(self, keywords: Iterable[str] | None):
+        values = tuple(str(item).strip() for item in (keywords or ()) if str(item).strip())
+        self.keywords = tuple(value.lower() for value in values)
+
+    def matches(self, message: Message) -> bool:
+        haystack = (message.text or "").lower()
+        return not any(keyword in haystack for keyword in self.keywords)
+
+
 class SenderFilter(_FilterBase):
     """Accept messages from a configured sender or sender alias."""
 

@@ -11,6 +11,7 @@ source_chat_id: source
 target_chat_id: target
 filters:
   keywords: [urgent]
+  exclude_keywords: [city, "New York"]
   senders: [alice]
 transport: waha
 """.strip(),
@@ -20,6 +21,7 @@ transport: waha
     cfg = load_config(path)
     assert cfg.source_chat_id == "source"
     assert cfg.filters.keywords == ("urgent",)
+    assert cfg.filters.exclude_keywords == ("city", "New York")
     assert cfg.listen_port == 8000
     assert cfg.waha_session == "default"
 

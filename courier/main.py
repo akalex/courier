@@ -7,7 +7,7 @@ from collections.abc import Callable
 
 from .adapters import build_waha_transport
 from .config import AppConfig, load_config
-from .filters import AnyOf, KeywordFilter, SenderFilter
+from .filters import AllOf, AnyOf, ExcludeKeywordFilter, KeywordFilter, SenderFilter
 from .forwarder import Forwarder
 from .ports import Filter, Transport
 
@@ -28,8 +28,7 @@ def build_filter_policy(config: AppConfig) -> Filter | None:
         config: The validated application configuration.
 
     Returns:
-        A filter instance combining keyword and sender filters, or None if no filters
-        are configured.
+        A filter policy combining positive criteria and excluded keywords.
 
     Raises:
         ValueError: If the configuration contains unsupported filter values.
@@ -37,14 +36,15 @@ def build_filter_policy(config: AppConfig) -> Filter | None:
     keywords = config.filters.keywords
     senders = config.filters.senders
 
-    filters: list[Filter] = []
+    allow_filters: list[Filter] = []
     if keywords:
-        filters.append(KeywordFilter(keywords))
+        allow_filters.append(KeywordFilter(keywords))
     if senders:
-        filters.append(SenderFilter(senders))
-    if not filters:
-        return None
-    return FILTER_COMBINER(*filters)
+        allow_filters.append(SenderFilter(senders))
+
+    allow_policy = FILTER_COMBINER(*allow_filters) if allow_filters else AllOf()
+    exclude_policy = ExcludeKeywordFilter(config.filters.exclude_keywords)
+    return AllOf(allow_policy, exclude_policy)
 
 
 async def _shutdown(transport: Transport, stop_event: asyncio.Event) -> None:
@@ -87,12 +87,14 @@ async def main() -> None:
 
     transport = builder(config)
     keywords = config.filters.keywords
+    exclude_keywords = config.filters.exclude_keywords
     senders = config.filters.senders
-    if keywords or senders:
+    if keywords or exclude_keywords or senders:
         logger.info(
-            "Message filters: keywords=%s senders=%s (OR)",
+            "Message filters: keywords=%s senders=%s (OR), exclude_keywords=%s",
             keywords or "disabled",
             senders or "disabled",
+            exclude_keywords or "disabled",
         )
     else:
         logger.info("Message filters: none (all messages from the source chat are eligible)")
