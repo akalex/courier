@@ -173,7 +173,7 @@ class WAHATransport:
         """Accept inbound WAHA webhook payloads and invoke the configured callback."""
         try:
             method, target, body = await self._read_http_request(reader)
-        except (asyncio.IncompleteReadError, ValueError, json.JSONDecodeError):
+        except asyncio.IncompleteReadError, ValueError, json.JSONDecodeError:
             await self._write_http_response(writer, 400, b"")
             return
         except Exception:
@@ -312,9 +312,13 @@ class WAHATransport:
         except ValueError:
             error_payload = {}
         error_message = error_payload.get("message", "") if isinstance(error_payload, dict) else ""
-        if endpoint == "/api/sendVideo" and response.status_code == 422 and (
-            isinstance(error_message, str)
-            and 'Use "devlikeapro/waha:chrome" docker image to send video in WEBJS' in error_message
+        if (
+            endpoint == "/api/sendVideo"
+            and response.status_code == 422
+            and (
+                isinstance(error_message, str)
+                and 'Use "devlikeapro/waha:chrome" docker image to send video in WEBJS' in error_message
+            )
         ):
             logger.warning("WAHA image does not support inline WEBJS video; forwarding as a file instead")
             response = await self.session.post("/api/sendFile", json=payload)
