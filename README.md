@@ -53,7 +53,7 @@ filters:
 
 Each configured keyword is matched as a case-insensitive substring of the message text or caption. If keywords are configured, a message must contain at least one of them to pass the keyword filter; media without a matching caption is not forwarded. Sender filters can also be configured.
 
-Courier forwards the original message text without adding a sender-name prefix. Images and videos are sent using WAHA's image and video endpoints respectively; other files are sent as attachments. WhatsApp shows forwarded messages as sent by the Courier account, so the original sender attribution and all source-side formatting cannot be preserved as native WhatsApp metadata.
+Courier forwards the original message text without adding a sender-name prefix. Images and videos are sent using WAHA's image and video endpoints respectively; other files are sent as attachments. On WAHA's ARM image, WEBJS cannot send inline videos, so Courier falls back to sending those videos as downloadable files. WhatsApp shows forwarded messages as sent by the Courier account, so the original sender attribution and all source-side formatting cannot be preserved as native WhatsApp metadata.
 
 At startup, Courier logs the configured keywords and senders. When both are configured, the filters are combined with OR: a message passes if it matches either the keyword filter or sender filter. With no filters configured, all messages from the source chat are eligible.
 

@@ -307,6 +307,17 @@ class WAHATransport:
         else:
             endpoint = "/api/sendFile"
         response = await self.session.post(endpoint, json=payload)
+        try:
+            error_payload = response.json()
+        except ValueError:
+            error_payload = {}
+        error_message = error_payload.get("message", "") if isinstance(error_payload, dict) else ""
+        if endpoint == "/api/sendVideo" and response.status_code == 422 and (
+            isinstance(error_message, str)
+            and 'Use "devlikeapro/waha:chrome" docker image to send video in WEBJS' in error_message
+        ):
+            logger.warning("WAHA image does not support inline WEBJS video; forwarding as a file instead")
+            response = await self.session.post("/api/sendFile", json=payload)
         self._raise_for_status(response)
 
     @staticmethod

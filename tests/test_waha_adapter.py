@@ -156,6 +156,39 @@ async def test_send_uses_media_specific_waha_endpoint(mime_type, expected_endpoi
 
 
 @pytest.mark.asyncio
+async def test_send_video_falls_back_to_file_when_waha_lacks_chrome(caplog):
+    transport = WAHATransport(
+        session_name="demo",
+        base_url="http://waha",
+        api_key="secret",
+        webhook_url="http://bot/webhook",
+    )
+    video_response = httpx.Response(
+        422,
+        json={
+            "message": 'Use "devlikeapro/waha:chrome" docker image to send video in WEBJS',
+            "error": "Unprocessable Entity",
+            "statusCode": 422,
+        },
+        request=httpx.Request("POST", "http://waha/api/sendVideo"),
+    )
+    file_response = httpx.Response(
+        200,
+        request=httpx.Request("POST", "http://waha/api/sendFile"),
+    )
+    transport.session = AsyncMock()
+    transport.session.post.side_effect = [video_response, file_response]
+
+    await transport.send("target@g.us", "caption", attachments=(Attachment("video/mp4", "clip.mp4", b"video"),))
+
+    assert [call.args[0] for call in transport.session.post.call_args_list] == [
+        "/api/sendVideo",
+        "/api/sendFile",
+    ]
+    assert "forwarding as a file" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_send_logs_waha_error_response(caplog):
     transport = WAHATransport(
         session_name="demo",
