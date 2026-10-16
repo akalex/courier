@@ -120,10 +120,11 @@ async def main() -> None:
 
     await transport.start(forwarder.handle_message)
     logger.info(
-        "Courier started with source=%s target=%s transport=%s",
+        "Courier started with source=%s target=%s transport=%s include_from_me=%s",
         config["source_chat_id"],
         config["target_chat_id"],
         transport_name,
+        config["include_from_me"],
     )
     await stop_event.wait()
 

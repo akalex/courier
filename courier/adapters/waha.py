@@ -75,6 +75,7 @@ class WAHATransport:
         loop: asyncio.AbstractEventLoop | None = None,
         listen_port: int = 8000,
         max_attachment_size: int = 20 * 1024 * 1024,
+        include_from_me: bool = False,
     ) -> None:
         self.session_name = session_name
         self.base_url = base_url.rstrip("/")
@@ -82,6 +83,7 @@ class WAHATransport:
         self.webhook_url = webhook_url
         self.listen_port = int(listen_port)
         self.max_attachment_size = int(max_attachment_size)
+        self.include_from_me = include_from_me
         self.loop = loop
         self.session: httpx.AsyncClient | None = None
         self._on_message = None
@@ -415,7 +417,7 @@ class WAHATransport:
             return None
 
         from_me = event_data.get("fromMe")
-        if from_me is True:
+        if from_me is True and not self.include_from_me:
             logger.debug("Ignoring WAHA message from self; sender_id=%s", event_data.get("participant"))
             return None
 
@@ -497,4 +499,5 @@ def build_waha_transport(config: dict[str, Any]) -> WAHATransport:
         webhook_url=config.get("webhook_url") or config.get("WHATSAPP_HOOK_URL") or "http://bot:8000/webhook",
         listen_port=int(config.get("listen_port") or 8000),
         max_attachment_size=int(config.get("max_attachment_size") or 20 * 1024 * 1024),
+        include_from_me=config.get("include_from_me", False),
     )

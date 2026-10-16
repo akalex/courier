@@ -46,6 +46,37 @@ async def test_message_payload_mapping():
     assert message.attachments[0].mime_type == "image/jpeg"
 
 
+def test_messages_from_linked_account_are_opt_in():
+    payload = {
+        "event": "message",
+        "payload": {
+            "id": "msg-self",
+            "chatId": "group-1@g.us",
+            "fromMe": True,
+            "body": "sent by linked account",
+        },
+    }
+    default_transport = WAHATransport(
+        session_name="demo",
+        base_url="http://waha",
+        api_key="secret",
+        webhook_url="http://bot/webhook",
+    )
+    enabled_transport = WAHATransport(
+        session_name="demo",
+        base_url="http://waha",
+        api_key="secret",
+        webhook_url="http://bot/webhook",
+        include_from_me=True,
+    )
+
+    assert default_transport._message_from_payload(payload) is None
+    message = enabled_transport._message_from_payload(payload)
+    assert message is not None
+    assert message.id == "msg-self"
+    assert message.chat_id == "group-1@g.us"
+
+
 @pytest.mark.asyncio
 async def test_send_builds_expected_request_body():
     transport = WAHATransport(

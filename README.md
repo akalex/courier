@@ -54,6 +54,8 @@ Each configured keyword is matched as a case-insensitive substring of the messag
 
 At startup, Courier logs the configured keywords and senders. When both are configured, the filters are combined with OR: a message passes if it matches either the keyword filter or sender filter. With no filters configured, all messages from the source chat are eligible.
 
+By default, Courier ignores messages sent by the linked WhatsApp account. Set `INCLUDE_FROM_ME=true` in `.env` to process those messages too. Keep source and target chat IDs different when enabling this option to avoid forwarding loops. The startup log reports whether this option is enabled.
+
 Supported environment variables:
 
 - `TRANSPORT`
@@ -64,6 +66,7 @@ Supported environment variables:
 - `WAHA_URL`
 - `WAHA_API_KEY`
 - `WAHA_SESSION`
+- `INCLUDE_FROM_ME` (default: `false`)
 - `CONFIG_PATH`
 
 ## Run locally

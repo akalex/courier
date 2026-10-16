@@ -54,6 +54,19 @@ def _coerce_list(value: Any, *, name: str) -> list[str]:
     raise ValueError(f"Config field '{name}' must be a string or list of strings")
 
 
+def _coerce_bool(value: Any, *, name: str) -> bool:
+    """Normalize boolean settings from YAML or environment configuration."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"True", "true", "1", "yes", "on"}:
+            return True
+        if normalized in {"False", "false", "0", "no", "off"}:
+            return False
+    raise ValueError(f"Config field '{name}' must be a boolean")
+
+
 def load_config(path: str | os.PathLike[str] | None = None) -> dict[str, Any]:
     """Load the project configuration from YAML defaults and environment overrides.
 
@@ -97,6 +110,10 @@ def load_config(path: str | os.PathLike[str] | None = None) -> dict[str, Any]:
         "WHATSAPP_HOOK_URL",
         config.get("webhook_url") or "http://localhost:8000/webhook",
     )
+    config["include_from_me"] = _coerce_bool(
+        os.getenv("INCLUDE_FROM_ME", config.get("include_from_me", False)),
+        name="include_from_me",
+    )
 
     filters_cfg = config.get("filters") or {}
     if not isinstance(filters_cfg, dict):
@@ -110,5 +127,7 @@ def load_config(path: str | os.PathLike[str] | None = None) -> dict[str, Any]:
         raise ValueError("Missing source_chat_id in config.yaml or SOURCE_CHAT_ID environment variable")
     if not config["target_chat_id"]:
         raise ValueError("Missing target_chat_id in config.yaml or TARGET_CHAT_ID environment variable")
+    if config["include_from_me"] and config["source_chat_id"] == config["target_chat_id"]:
+        raise ValueError("SOURCE_CHAT_ID and TARGET_CHAT_ID must differ when INCLUDE_FROM_ME is enabled")
 
     return config

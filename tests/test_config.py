@@ -38,3 +38,31 @@ def test_webhook_url_can_be_configured_from_environment(tmp_path, monkeypatch):
     cfg = load_config(path)
 
     assert cfg["webhook_url"] == "http://courier:8000/webhook"
+
+
+def test_include_from_me_defaults_to_false_and_can_be_enabled(tmp_path, monkeypatch):
+    path = tmp_path / "config.yaml"
+    path.write_text("source_chat_id: source\ntarget_chat_id: target\n", encoding="utf-8")
+
+    assert load_config(path)["include_from_me"] is False
+
+    monkeypatch.setenv("INCLUDE_FROM_ME", "true")
+    assert load_config(path)["include_from_me"] is True
+
+
+def test_include_from_me_requires_distinct_source_and_target(tmp_path, monkeypatch):
+    path = tmp_path / "config.yaml"
+    path.write_text("source_chat_id: same\ntarget_chat_id: same\n", encoding="utf-8")
+    monkeypatch.setenv("INCLUDE_FROM_ME", "true")
+
+    with pytest.raises(ValueError, match="must differ"):
+        load_config(path)
+
+
+def test_include_from_me_rejects_invalid_boolean(tmp_path, monkeypatch):
+    path = tmp_path / "config.yaml"
+    path.write_text("source_chat_id: source\ntarget_chat_id: target\n", encoding="utf-8")
+    monkeypatch.setenv("INCLUDE_FROM_ME", "sometimes")
+
+    with pytest.raises(ValueError, match="include_from_me"):
+        load_config(path)
