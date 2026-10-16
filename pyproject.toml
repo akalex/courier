@@ -1,7 +1,7 @@
 [project]
 name = "courier"
 version = "0.1.0"
-description = "Async WhatsApp group-to-group forwarder with a pluggable transport layer."
+description = "Async message forwarder with pluggable source and destination adapters."
 license = { text = "MIT" }
 authors = [
     { name = "Oleksandr Omyshev", email = "a.omyshev@gmail.com" },

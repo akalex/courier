@@ -25,7 +25,7 @@ async def test_forwarder_preserves_message_text_and_forwards_attachment():
     forwarder = Forwarder(
         source_chat_id="source",
         target_chat_id="target",
-        transport=transport,
+        destination=transport,
         filter_policy=AllOf(KeywordFilter(["urgent"]), SenderFilter({"alice"})),
         recent_ids=100,
     )
@@ -52,7 +52,7 @@ async def test_forwarder_drops_duplicate_or_other_chat_messages():
     forwarder = Forwarder(
         source_chat_id="source",
         target_chat_id="target",
-        transport=transport,
+        destination=transport,
         filter_policy=AllOf(KeywordFilter(["urgent"]), SenderFilter({"alice"})),
         recent_ids=10,
     )
@@ -103,7 +103,7 @@ async def test_forwarder_retries_failed_send_and_deduplicates_after_success():
             await super().send(chat_id, text, attachments)
 
     transport = FailOnceTransport()
-    forwarder = Forwarder(source_chat_id="source", target_chat_id="target", transport=transport)
+    forwarder = Forwarder(source_chat_id="source", target_chat_id="target", destination=transport)
     message = Message(
         id="retry-me",
         chat_id="source",
@@ -124,7 +124,7 @@ async def test_forwarder_retries_failed_send_and_deduplicates_after_success():
 @pytest.mark.asyncio
 async def test_forwarder_bounds_successful_message_deduplication_cache():
     transport = FakeTransport()
-    forwarder = Forwarder(source_chat_id="source", target_chat_id="target", transport=transport, recent_ids=1)
+    forwarder = Forwarder(source_chat_id="source", target_chat_id="target", destination=transport, recent_ids=1)
 
     def message(message_id):
         return Message(

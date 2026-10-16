@@ -24,6 +24,83 @@ transport: waha
     assert cfg.filters.exclude_keywords == ("city", "New York")
     assert cfg.listen_port == 8000
     assert cfg.waha_session == "default"
+    assert cfg.source_transport == "waha"
+    assert cfg.destination_transport == "waha"
+
+
+def test_matrix_destination_config_loads_and_requires_credentials(tmp_path, monkeypatch):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """
+source_transport: waha
+destination_transport: matrix
+source_chat_id: source
+target_chat_id: "!room:example.org"
+matrix:
+  homeserver_url: https://matrix.example.org
+  access_token: secret-token
+""".strip(),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(path)
+
+    assert cfg.source_transport == "waha"
+    assert cfg.destination_transport == "matrix"
+    assert cfg.target_chat_id == "!room:example.org"
+    assert cfg.matrix_homeserver_url == "https://matrix.example.org"
+    assert cfg.matrix_access_token == "secret-token"
+
+    path.write_text(
+        "source_transport: waha\ndestination_transport: matrix\nsource_chat_id: source\n"
+        "target_chat_id: '!room:example.org'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("MATRIX_HOMESERVER_URL", raising=False)
+    monkeypatch.delenv("MATRIX_ACCESS_TOKEN", raising=False)
+    with pytest.raises(ValueError, match="matrix.homeserver_url"):
+        load_config(path)
+
+
+def test_matrix_credentials_can_be_configured_from_environment(tmp_path, monkeypatch):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "source_transport: waha\ndestination_transport: matrix\n"
+        "source_chat_id: source\ntarget_chat_id: '!room:example.org'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MATRIX_HOMESERVER_URL", "https://matrix.example.org/")
+    monkeypatch.setenv("MATRIX_ACCESS_TOKEN", "environment-token")
+
+    cfg = load_config(path)
+
+    assert cfg.matrix_homeserver_url == "https://matrix.example.org"
+    assert cfg.matrix_access_token == "environment-token"
+
+
+def test_transport_setting_remains_a_legacy_default_for_source_and_destination(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "transport: waha\nsource_chat_id: source\ntarget_chat_id: target\n",
+        encoding="utf-8",
+    )
+
+    cfg = load_config(path)
+
+    assert cfg.source_transport == "waha"
+    assert cfg.destination_transport == "waha"
+
+
+def test_unsupported_destination_transport_fails_validation(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "source_transport: waha\ndestination_transport: signal\n"
+        "source_chat_id: source\ntarget_chat_id: target\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="Unsupported destination_transport"):
+        load_config(path)
 
 
 def test_invalid_config_fails_fast(tmp_path):

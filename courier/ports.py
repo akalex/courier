@@ -7,10 +7,17 @@ from .domain import Attachment, Message
 
 
 @runtime_checkable
-class Transport(Protocol):
-    """A messaging transport that can receive and forward chat messages."""
+class MessageSource(Protocol):
+    """A messaging source that receives messages and reports them to Courier."""
 
     async def start(self, on_message: Callable[[Message], Awaitable[None]]) -> None: ...
+
+    async def stop(self) -> None: ...
+
+
+@runtime_checkable
+class MessageDestination(Protocol):
+    """A messaging destination that can receive forwarded messages."""
 
     async def send(self, chat_id: str, text: str, attachments: tuple[Attachment, ...] = ()) -> None: ...
 

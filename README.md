@@ -1,8 +1,8 @@
 # Courier
 
-Courier is an asynchronous WhatsApp message forwarder. Each Courier process watches one source chat, applies optional sender and keyword filters, and relays eligible messages to one target chat through WAHA.
+Courier is an asynchronous message forwarder. Each Courier process watches one WhatsApp source chat, applies optional sender and keyword filters, and relays eligible messages to one target chat on WhatsApp or Matrix (including Element).
 
-Courier communicates with WAHA over its HTTP API and receives messages through a webhook. One process/container manages one WAHA session and one source-to-target route.
+Courier receives WhatsApp messages from WAHA over its HTTP webhook and sends them through a separately configured destination adapter. One process/container manages one source-to-destination route.
 
 ## Contents
 
@@ -18,7 +18,7 @@ Courier communicates with WAHA over its HTTP API and receives messages through a
 
 ## Features
 
-- Forward message text and supported media from one WhatsApp chat to another
+- Forward message text and supported media from WhatsApp to WhatsApp or a Matrix room
 - Filter by sender ID/name and/or included keywords, with optional excluded keywords
 - Deduplicate up to 1,000 successfully forwarded message IDs in memory
 - Retry failed webhook deliveries through WAHA's configured retry policy
@@ -40,24 +40,24 @@ uv sync --dev
 ## How it works
 
 1. Courier loads and validates its settings from YAML and environment variables.
-2. It connects to the configured WAHA URL using the configured API key.
+2. It connects to the configured WhatsApp source (currently WAHA) using the configured API key.
 3. It finds or creates the configured WAHA session, registers its webhook for `message` and `message.any`, and starts the session if needed.
 4. WAHA sends message events to Courier's `POST /webhook` endpoint.
-5. Courier ignores events outside the configured source chat, applies filters, and sends the message to the target chat through WAHA.
+5. Courier ignores events outside the configured source chat, applies filters, and sends the message to the configured destination.
 
 Courier also exposes `GET /health` on the same listen port. The webhook server binds to all container interfaces; in a Compose deployment, WAHA should reach it through the private service network. Do not expose the webhook port to the public internet unless it is protected by an appropriate network or authentication layer.
 
-There are two separate network paths to account for:
+The WhatsApp source requires two separate WAHA network paths:
 
-- Courier must be able to call WAHA at `WAHA_URL` for session setup, media downloads, and outgoing messages.
+- Courier must be able to call WAHA at `WAHA_URL` for session setup and media downloads (and outgoing messages when WAHA is the destination).
 - WAHA must be able to call Courier at `WHATSAPP_HOOK_URL` to deliver incoming events.
 
 If WAHA runs on another VM, both paths must be routable between the machines. Prefer a private network/VPN or TLS-protected endpoints with firewall rules allowing only the required traffic. Do not publish WAHA's unauthenticated or unencrypted API port directly to the internet.
 
 ## Message behavior and limitations
 
-- Text and captions are forwarded without a sender-name prefix. The forwarded WhatsApp message is sent by the Courier-linked account; WhatsApp does not preserve the original sender identity or all source-side formatting as native metadata.
-- Courier forwards at most one attachment per message. Images use WAHA's `sendImage` endpoint, videos use `sendVideo`, and other files use `sendFile`.
+- Text and captions are forwarded without a sender-name prefix. WhatsApp destinations send as the Courier-linked account; neither WhatsApp nor Matrix preserves the original sender identity or all source-side formatting as native metadata.
+- Courier forwards at most one attachment per message. WhatsApp destinations use WAHA's `sendImage`, `sendVideo`, or `sendFile` endpoint. Matrix destinations upload media to the homeserver, then send an image, video, audio, or file event to the configured room.
 - If WAHA reports that inline WEBJS video sending requires the `devlikeapro/waha:chrome` image, Courier retries the video as a file. This is useful with WAHA's ARM image, where inline WEBJS video is not supported.
 - Media download failures, unsafe media URLs, and empty media do not discard the text/caption. An attachment larger than `max_attachment_size` is skipped; Courier sends the text/caption instead. The size limit defaults to 20 MiB. Media is downloaded before this forwarding-size check, so the setting does not limit download bandwidth or peak download memory.
 - Media URLs are fetched only when they resolve to the configured WAHA origin. Loopback media URLs are rewritten to the configured WAHA host. This prevents Courier's WAHA API-key header from being sent to an unrelated host; URLs on another hostname/origin are skipped.
@@ -78,9 +78,10 @@ Courier reads a YAML mapping from `config.yaml` by default. Set `CONFIG_PATH` to
 Example `config.yaml`:
 
 ```yaml
-transport: waha
+source_transport: waha
+destination_transport: matrix
 source_chat_id: "120363123456789012@g.us"
-target_chat_id: "120363987654321098@g.us"
+target_chat_id: "!roomid:example.org"
 listen_port: 8000
 log_level: INFO
 waha_url: "http://localhost:3000"
@@ -89,6 +90,10 @@ waha_session: "default"
 webhook_url: "http://localhost:8000/webhook"
 include_from_me: false
 max_attachment_size: 20971520
+
+matrix:
+  homeserver_url: "https://matrix.example.org"
+  access_token: "your-matrix-access-token"
 
 filters:
   keywords:
@@ -104,15 +109,19 @@ filters:
 
 | Setting | Environment variable | YAML key | Default / requirement |
 | --- | --- | --- | --- |
-| Transport | `TRANSPORT` | `transport` | `waha`; currently the only supported transport |
+| Legacy transport | `TRANSPORT` | `transport` | `waha`; defaults both source and destination to WAHA |
+| Source transport | `SOURCE_TRANSPORT` | `source_transport` | `waha`; currently the only supported source |
+| Destination transport | `DESTINATION_TRANSPORT` | `destination_transport` | Inherits `TRANSPORT` or defaults to `waha`; supports `waha` or `matrix` |
 | Source chat ID | `SOURCE_CHAT_ID` | `source_chat_id` | Required |
-| Target chat ID | `TARGET_CHAT_ID` | `target_chat_id` | Required |
+| Destination chat/room ID | `TARGET_CHAT_ID` | `target_chat_id` | Required; for Matrix use the room ID, e.g. `!roomid:example.org` |
 | Webhook listen port | `LISTEN_PORT` | `listen_port` | `8000`; must be a positive integer |
 | Log level | `LOG_LEVEL` | `log_level` | `INFO`; must be a recognized Python logging level |
 | WAHA base URL | `WAHA_URL` | `waha_url` or `waha.url` | `http://localhost:3000` |
 | WAHA API key | `WAHA_API_KEY` | `waha_api_key` or `waha.api_key` | Empty (only use this if WAHA does not require a key) |
 | WAHA session name | `WAHA_SESSION` | `waha_session` or `waha.session` | `default` |
 | Courier webhook URL registered in WAHA | `WHATSAPP_HOOK_URL` | `webhook_url` | `http://localhost:8000/webhook` |
+| Matrix homeserver URL | `MATRIX_HOMESERVER_URL` | `matrix.homeserver_url` | Required for a Matrix destination |
+| Matrix access token | `MATRIX_ACCESS_TOKEN` | `matrix.access_token` | Required for a Matrix destination; keep it secret |
 | Include messages sent by the linked account | `INCLUDE_FROM_ME` | `include_from_me` | `false`; accepts true/false, yes/no, on/off, or 1/0 |
 | Maximum outgoing attachment size in bytes | — | `max_attachment_size` | `20971520` (20 MiB); must be positive |
 | Required/include keyword values | — | `filters.keywords` | Empty; accepts a YAML list or comma-separated string; any one match satisfies the keyword criterion |
@@ -122,7 +131,9 @@ filters:
 
 `WHATSAPP_HOOK_URL` is the URL WAHA calls to deliver events; it must be reachable from the WAHA container/network. This is distinct from `WAHA_URL`, which Courier uses to call WAHA. For separate Courier containers, use a unique service name or otherwise unique webhook URL for each instance. `LISTEN_PORT` is the port Courier binds inside its container; separate containers can use the same internal port.
 
-`max_attachment_size` and filter values are configured in YAML; they have no environment-variable overrides. Unknown transport names and invalid typed settings fail during startup. If `INCLUDE_FROM_ME` is true, source and target chat IDs must differ. Filter order/combination is: the message must pass at least one configured include criterion (keyword or sender), if any are configured, and must not match any excluded keyword. When only exclusions are configured, all messages without excluded terms are eligible.
+For a Matrix destination, `TARGET_CHAT_ID` is the Matrix room ID, and the Matrix user represented by `MATRIX_ACCESS_TOKEN` must already be joined to that room. Keep the access token secret.
+
+`max_attachment_size` and filter values are configured in YAML; they have no environment-variable overrides. Unknown transport names and invalid typed settings fail during startup. For WhatsApp-to-WhatsApp routes, `INCLUDE_FROM_ME` requires distinct source and target chat IDs to avoid loops. Filter order/combination is: the message must pass at least one configured include criterion (keyword or sender), if any are configured, and must not match any excluded keyword. When only exclusions are configured, all messages without excluded terms are eligible.
 
 ## Run locally
 
@@ -477,6 +488,7 @@ Run the service locally with `uv run python -m courier.main`. The configuration 
 courier/
   adapters/
     __init__.py
+    matrix.py
     waha.py
   __init__.py
   config.py
@@ -494,4 +506,4 @@ tests/
   test_webhook_server.py
 ```
 
-`main.py` composes configuration, filters, forwarding, and the transport. `forwarder.py` contains source filtering, attachment-size checks, and bounded in-memory deduplication. `adapters/waha.py` handles WAHA API/session behavior and message normalization. `webhook_server.py` provides the inbound HTTP endpoint.
+`main.py` composes configuration, filters, forwarding, and separate source/destination adapters. `forwarder.py` contains source filtering, attachment-size checks, and bounded in-memory deduplication. `adapters/waha.py` handles WhatsApp events and WAHA API/session behavior; `adapters/matrix.py` sends messages and media to Matrix rooms. `webhook_server.py` provides the inbound HTTP endpoint.

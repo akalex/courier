@@ -6,7 +6,7 @@ from collections import OrderedDict
 
 from .domain import Message
 from .filters import AllOf
-from .ports import Filter, Transport
+from .ports import Filter, MessageDestination
 
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,7 @@ class Forwarder:
         *,
         source_chat_id: str,
         target_chat_id: str,
-        transport: Transport,
+        destination: MessageDestination,
         filter_policy: Filter | None = None,
         recent_ids: int = 1000,
         max_attachment_size: int = 20 * 1024 * 1024,
@@ -30,14 +30,14 @@ class Forwarder:
         Args:
             source_chat_id: Chat identifier that should be monitored for incoming messages.
             target_chat_id: Chat identifier that receives forwarded messages.
-            transport: Transport implementation used to send outgoing messages.
+            destination: Messaging destination used to send outgoing messages.
             filter_policy: Optional message filter used to accept or reject incoming data.
             recent_ids: Number of recent message IDs to retain for deduplication.
             max_attachment_size: Maximum accepted attachment byte size before filtering.
         """
         self.source_chat_id = source_chat_id
         self.target_chat_id = target_chat_id
-        self.transport = transport
+        self.destination = destination
         self.filter_policy = filter_policy or AllOf()
         if recent_ids <= 0:
             raise ValueError("recent_ids must be greater than zero")
@@ -71,7 +71,7 @@ class Forwarder:
             formatted_text = self._format_text(message)
             attachments = self._sanitize_attachments(message)
             try:
-                await self.transport.send(self.target_chat_id, formatted_text, attachments)
+                await self.destination.send(self.target_chat_id, formatted_text, attachments)
             except Exception:
                 logger.exception("Failed to forward message id=%s to chat_id=%s", message.id, self.target_chat_id)
                 raise

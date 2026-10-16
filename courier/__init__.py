@@ -1,7 +1,7 @@
 """Courier package.
 
-This package contains the transport-agnostic message forwarding logic and the
-WAHA adapter used to bridge incoming WhatsApp traffic to a target chat.
+This package contains transport-agnostic message forwarding logic and adapters
+for receiving WhatsApp messages and sending them to messaging destinations.
 """
 
 __all__ = ["__version__"]

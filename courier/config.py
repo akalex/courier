@@ -19,6 +19,8 @@ class FilterSettings:
 @dataclass(frozen=True, slots=True)
 class AppConfig:
     transport: str
+    source_transport: str
+    destination_transport: str
     source_chat_id: str
     target_chat_id: str
     listen_port: int
@@ -27,6 +29,8 @@ class AppConfig:
     waha_api_key: str
     waha_session: str
     webhook_url: str
+    matrix_homeserver_url: str
+    matrix_access_token: str
     include_from_me: bool
     filters: FilterSettings
     max_attachment_size: int = 20 * 1024 * 1024
@@ -110,6 +114,58 @@ def _coerce_string(value: Any, *, name: str, default: str = "") -> str:
     return str(value).strip()
 
 
+def _matrix_settings(raw: dict[str, Any]) -> tuple[str, str]:
+    matrix_config = raw.get("matrix") or {}
+    if not isinstance(matrix_config, dict):
+        raise ValueError("Config field 'matrix' must be a mapping")
+    homeserver_url = _coerce_string(
+        os.getenv(
+            "MATRIX_HOMESERVER_URL",
+            raw.get("matrix_homeserver_url") or matrix_config.get("homeserver_url") or "",
+        ),
+        name="matrix.homeserver_url",
+    ).rstrip("/")
+    access_token = _coerce_string(
+        os.getenv(
+            "MATRIX_ACCESS_TOKEN",
+            raw.get("matrix_access_token") or matrix_config.get("access_token") or "",
+        ),
+        name="matrix.access_token",
+    )
+    return homeserver_url, access_token
+
+
+def _validate_routing_config(
+    *,
+    source_transport: str,
+    destination_transport: str,
+    source_chat_id: str,
+    target_chat_id: str,
+    include_from_me: bool,
+    matrix_homeserver_url: str,
+    matrix_access_token: str,
+) -> None:
+    if not source_chat_id:
+        raise ValueError("Missing source_chat_id in config.yaml or SOURCE_CHAT_ID environment variable")
+    if not target_chat_id:
+        raise ValueError("Missing target_chat_id in config.yaml or TARGET_CHAT_ID environment variable")
+    if source_transport != "waha":
+        raise ValueError(f"Unsupported source_transport '{source_transport}'. Available: waha")
+    if destination_transport not in {"waha", "matrix"}:
+        raise ValueError(f"Unsupported destination_transport '{destination_transport}'. Available: matrix, waha")
+    if destination_transport == "matrix" and (not matrix_homeserver_url or not matrix_access_token):
+        if not matrix_homeserver_url:
+            raise ValueError("Missing matrix.homeserver_url or MATRIX_HOMESERVER_URL for Matrix destination")
+        raise ValueError("Missing matrix.access_token or MATRIX_ACCESS_TOKEN for Matrix destination")
+    if (
+        include_from_me
+        and source_transport == "waha"
+        and destination_transport == "waha"
+        and source_chat_id == target_chat_id
+    ):
+        raise ValueError("SOURCE_CHAT_ID and TARGET_CHAT_ID must differ when INCLUDE_FROM_ME is enabled")
+
+
 def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
     """Load the project configuration from YAML defaults and environment overrides.
 
@@ -135,7 +191,15 @@ def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
         raise ValueError("Config field 'filters' must be a mapping")
 
     transport = _coerce_string(os.getenv("TRANSPORT", raw.get("transport", "waha")), name="transport").lower()
-    if not transport:
+    source_transport = _coerce_string(
+        os.getenv("SOURCE_TRANSPORT", raw.get("source_transport", transport)),
+        name="source_transport",
+    ).lower()
+    destination_transport = _coerce_string(
+        os.getenv("DESTINATION_TRANSPORT", raw.get("destination_transport", transport)),
+        name="destination_transport",
+    ).lower()
+    if not source_transport or not destination_transport:
         raise ValueError("Config requires a transport name (for example: 'waha')")
 
     source_chat_id = _coerce_string(os.getenv("SOURCE_CHAT_ID", raw.get("source_chat_id")), name="source_chat_id")
@@ -165,6 +229,7 @@ def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
         os.getenv("WHATSAPP_HOOK_URL", raw.get("webhook_url") or "http://localhost:8000/webhook"),
         name="webhook_url",
     )
+    matrix_homeserver_url, matrix_access_token = _matrix_settings(raw)
     include_from_me_value: Any = os.getenv("INCLUDE_FROM_ME")
     if include_from_me_value is None or not include_from_me_value.strip():
         include_from_me_value = raw.get("include_from_me", False)
@@ -175,15 +240,20 @@ def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
         senders=tuple(_coerce_list(filters_cfg.get("senders"), name="filters.senders")),
     )
 
-    if not source_chat_id:
-        raise ValueError("Missing source_chat_id in config.yaml or SOURCE_CHAT_ID environment variable")
-    if not target_chat_id:
-        raise ValueError("Missing target_chat_id in config.yaml or TARGET_CHAT_ID environment variable")
-    if include_from_me and source_chat_id == target_chat_id:
-        raise ValueError("SOURCE_CHAT_ID and TARGET_CHAT_ID must differ when INCLUDE_FROM_ME is enabled")
+    _validate_routing_config(
+        source_transport=source_transport,
+        destination_transport=destination_transport,
+        source_chat_id=source_chat_id,
+        target_chat_id=target_chat_id,
+        include_from_me=include_from_me,
+        matrix_homeserver_url=matrix_homeserver_url,
+        matrix_access_token=matrix_access_token,
+    )
 
     return AppConfig(
         transport=transport,
+        source_transport=source_transport,
+        destination_transport=destination_transport,
         source_chat_id=source_chat_id,
         target_chat_id=target_chat_id,
         listen_port=listen_port,
@@ -192,6 +262,8 @@ def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
         waha_api_key=waha_api_key,
         waha_session=waha_session,
         webhook_url=webhook_url,
+        matrix_homeserver_url=matrix_homeserver_url,
+        matrix_access_token=matrix_access_token,
         include_from_me=include_from_me,
         filters=filters,
         max_attachment_size=max_attachment_size,
