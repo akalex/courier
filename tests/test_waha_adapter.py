@@ -5,7 +5,8 @@ import httpx
 import pytest
 
 from courier.adapters.waha import WAHATransport
-from courier.domain import Attachment
+from courier.domain import Attachment, Message
+from courier.webhook_server import WebhookServer
 
 
 @pytest.mark.asyncio
@@ -15,7 +16,6 @@ async def test_message_payload_mapping():
         base_url="http://waha",
         api_key="secret",
         webhook_url="http://bot/webhook",
-        loop=None,
     )
 
     payload = {
@@ -111,7 +111,6 @@ async def test_send_builds_expected_request_body():
         base_url="http://waha",
         api_key="secret",
         webhook_url="http://bot/webhook",
-        loop=None,
     )
     transport.session = AsyncMock()
     transport.session.post.return_value = httpx.Response(
@@ -285,6 +284,40 @@ async def test_hydrate_media_failure_keeps_text_without_empty_attachment():
 
 
 @pytest.mark.asyncio
+async def test_hydrate_media_rejects_external_origin_without_request():
+    requested_urls = []
+
+    async def handler(request):
+        requested_urls.append(str(request.url))
+        return httpx.Response(200, content=b"video-data")
+
+    transport = WAHATransport(
+        session_name="default",
+        base_url="http://waha:3000",
+        api_key="secret",
+        webhook_url="http://courier:8000/webhook",
+    )
+    message = Message(
+        id="message-external",
+        chat_id="group@g.us",
+        sender_id="sender",
+        sender_name="Sender",
+        text="caption",
+        attachments=(),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        transport.session = client
+        hydrated = await transport._hydrate_media(
+            message,
+            {"media": {"url": "https://attacker.example/media.mp4"}},
+        )
+
+    assert requested_urls == []
+    assert hydrated.text == "caption"
+    assert hydrated.attachments == ()
+
+
+@pytest.mark.asyncio
 async def test_hydrate_media_absent_keeps_text_without_attachment():
     transport = WAHATransport(
         session_name="default",
@@ -325,12 +358,9 @@ async def test_start_sets_api_key_header_and_configures_session(monkeypatch):
         async def aclose(self):
             pass
 
-    async def fake_server(*args, **kwargs):
-        return AsyncMock()
-
     configure_session = AsyncMock()
     monkeypatch.setattr(httpx, "AsyncClient", DummyAsyncClient)
-    monkeypatch.setattr(__import__("asyncio"), "start_server", fake_server)
+    monkeypatch.setattr(WebhookServer, "start", AsyncMock())
     monkeypatch.setattr(WAHATransport, "_ensure_waha_session", configure_session)
 
     transport = WAHATransport(
@@ -338,7 +368,6 @@ async def test_start_sets_api_key_header_and_configures_session(monkeypatch):
         base_url="http://waha",
         api_key="secret",
         webhook_url="http://bot/webhook",
-        loop=None,
     )
 
     await transport.start(lambda message: None)
@@ -371,7 +400,11 @@ async def test_ensure_waha_session_configures_existing_session():
             assert request.url.path == "/api/sessions/demo"
             config = json.loads(request.content)["config"]
             assert config["webhooks"] == [
-                {"url": "http://courier:8000/webhook", "events": ["session.status", "message", "message.any"]},
+                {
+                    "url": "http://courier:8000/webhook",
+                    "events": ["session.status", "message", "message.any"],
+                    "retries": {"policy": "exponential", "delaySeconds": 2, "attempts": 10},
+                },
                 {"url": "http://other/webhook", "events": ["message"]},
             ]
             return httpx.Response(200, json={"name": "demo"})
@@ -403,7 +436,13 @@ async def test_ensure_waha_session_creates_and_starts_missing_session():
             assert body == {
                 "name": "demo",
                 "config": {
-                    "webhooks": [{"url": "http://courier:8000/webhook", "events": ["message", "message.any"]}]
+                    "webhooks": [
+                        {
+                            "url": "http://courier:8000/webhook",
+                            "events": ["message", "message.any"],
+                            "retries": {"policy": "exponential", "delaySeconds": 2, "attempts": 10},
+                        }
+                    ]
                 },
             }
             return httpx.Response(201, json={"name": "demo"})
@@ -435,7 +474,6 @@ async def test_dispatches_message_from_webhook_payload():
         base_url="http://waha",
         api_key="secret",
         webhook_url="http://bot/webhook",
-        loop=None,
     )
     transport._on_message = AsyncMock()
 

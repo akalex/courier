@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import json
 import logging
 from dataclasses import replace
 from typing import Any
@@ -10,7 +9,9 @@ from urllib.parse import quote
 
 import httpx
 
+from ..config import AppConfig
 from ..domain import Attachment, Message
+from ..webhook_server import WebhookServer
 
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ def _coalesce(*values: Any) -> str:
 
 def _with_message_webhook(config: dict[str, Any], webhook_url: str) -> list[dict[str, Any]]:
     required_events = ("message", "message.any")
+    default_retries = {"policy": "exponential", "delaySeconds": 2, "attempts": 10}
     webhooks = config.get("webhooks") or []
     if not isinstance(webhooks, list) or not all(isinstance(hook, dict) for hook in webhooks):
         raise ValueError("WAHA returned an invalid session webhook config")
@@ -57,9 +59,12 @@ def _with_message_webhook(config: dict[str, Any], webhook_url: str) -> list[dict
             if not isinstance(events, list):
                 raise ValueError("WAHA returned an invalid webhook event config")
             webhook["events"] = [*events, *(event for event in required_events if event not in events)]
+            webhook.setdefault("retries", dict(default_retries))
             return configured_webhooks
 
-    configured_webhooks.append({"url": webhook_url, "events": list(required_events)})
+    configured_webhooks.append(
+        {"url": webhook_url, "events": list(required_events), "retries": dict(default_retries)},
+    )
     return configured_webhooks
 
 
@@ -73,7 +78,6 @@ class WAHATransport:
         base_url: str,
         api_key: str,
         webhook_url: str,
-        loop: asyncio.AbstractEventLoop | None = None,
         listen_port: int = 8000,
         max_attachment_size: int = 20 * 1024 * 1024,
         include_from_me: bool = False,
@@ -85,10 +89,13 @@ class WAHATransport:
         self.listen_port = int(listen_port)
         self.max_attachment_size = int(max_attachment_size)
         self.include_from_me = include_from_me
-        self.loop = loop
         self.session: httpx.AsyncClient | None = None
         self._on_message = None
-        self._server: asyncio.AbstractServer | None = None
+        self._webhook_server = WebhookServer(
+            host="0.0.0.0",
+            port=self.listen_port,
+            handler=self._handle_webhook,
+        )
 
     async def start(self, on_message) -> None:
         """Start the WAHA HTTP client so messages can be sent and received.
@@ -109,10 +116,12 @@ class WAHATransport:
             timeout=httpx.Timeout(30.0, connect=10.0, read=20.0),
         )
 
-        if self._server is None:
-            self._server = await asyncio.start_server(self._handle_http_request, "0.0.0.0", self.listen_port)
-
-        await self._ensure_waha_session()
+        try:
+            await self._webhook_server.start()
+            await self._ensure_waha_session()
+        except Exception:
+            await self.stop()
+            raise
         logger.info("WAHA transport started for %s", self.base_url)
 
     async def _ensure_waha_session(self) -> None:
@@ -143,7 +152,19 @@ class WAHATransport:
                 "/api/sessions/",
                 json={
                     "name": self.session_name,
-                    "config": {"webhooks": [{"url": self.webhook_url, "events": ["message", "message.any"]}]},
+                    "config": {
+                        "webhooks": [
+                            {
+                                "url": self.webhook_url,
+                                "events": ["message", "message.any"],
+                                "retries": {
+                                    "policy": "exponential",
+                                    "delaySeconds": 2,
+                                    "attempts": 10,
+                                },
+                            }
+                        ]
+                    },
                 },
             )
             response.raise_for_status()
@@ -169,87 +190,17 @@ class WAHATransport:
             response.raise_for_status()
         logger.info("Configured WAHA session %s webhook for %s", self.session_name, self.webhook_url)
 
-    async def _handle_http_request(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        """Accept inbound WAHA webhook payloads and invoke the configured callback."""
-        try:
-            method, target, body = await self._read_http_request(reader)
-        except asyncio.IncompleteReadError, ValueError, json.JSONDecodeError:
-            await self._write_http_response(writer, 400, b"")
-            return
-        except Exception:
-            logger.exception("WAHA webhook request failed")
-            await self._write_http_response(writer, 500, b"")
-            return
-
-        if method == "GET" and target == "/health":
-            await self._write_http_response(writer, 200, b"OK")
-            return
-        if method == "POST" and target == "/webhook":
-            try:
-                payload = json.loads(body.decode("utf-8")) if body else {}
-            except json.JSONDecodeError:
-                await self._write_http_response(writer, 400, b"")
-                return
-            if isinstance(payload, dict):
-                message = self._message_from_payload(payload)
-                if message is not None:
-                    await self._dispatch_message(message, payload)
-            await self._write_http_response(writer, 200, b"OK")
-            return
-
-        await self._write_http_response(writer, 404, b"")
-
-    async def _read_http_request(self, reader: asyncio.StreamReader) -> tuple[str, str, bytes]:
-        """Parse a minimal HTTP request from an inbound socket."""
-        request_line = await reader.readuntil(b"\r\n")
-        if not request_line:
-            raise ValueError("empty request")
-
-        parts = request_line.decode("iso-8859-1").strip().split()
-        if len(parts) != 3:
-            raise ValueError("invalid request line")
-
-        method, target, _ = parts
-        headers: dict[str, str] = {}
-        while True:
-            line = await reader.readuntil(b"\r\n")
-            if line in (b"\r\n", b"\n"):
-                break
-            name, _, value = line.decode("iso-8859-1").partition(":")
-            headers[name.strip().lower()] = value.strip()
-
-        content_length = int(headers.get("content-length", "0") or "0")
-        body = await reader.readexactly(content_length) if content_length else b""
-        return method.upper(), target, body
-
-    async def _write_http_response(
-        self,
-        writer: asyncio.StreamWriter,
-        status_code: int,
-        body: bytes,
-    ) -> None:
-        """Write a simple HTTP response to a client socket."""
-        status_text = {
-            200: "OK",
-            400: "Bad Request",
-            404: "Not Found",
-            500: "Internal Server Error",
-        }.get(status_code, "OK")
-        writer.write(f"HTTP/1.1 {status_code} {status_text}\r\nContent-Length: {len(body)}\r\n\r\n".encode())
-        if body:
-            writer.write(body)
-        await writer.drain()
-        writer.close()
-        await writer.wait_closed()
+    async def _handle_webhook(self, payload: dict[str, Any]) -> None:
+        message = self._message_from_payload(payload)
+        if message is not None:
+            await self._dispatch_message(message, payload)
 
     async def stop(self) -> None:
         """Close the underlying WAHA session and any local webhooks."""
-        if self._server is not None:
-            self._server.close()
-            await self._server.wait_closed()
-            self._server = None
+        await self._webhook_server.stop()
         if self.session is not None and not self.session.is_closed:
             await self.session.aclose()
+        self.session = None
         logger.info("WAHA transport stopped")
 
     async def send(self, chat_id: str, text: str, attachments: tuple[Attachment, ...] = ()) -> None:
@@ -348,12 +299,9 @@ class WAHATransport:
         Raises:
             Exception: If the callback or hydrated-message flow raises an error.
         """
-        try:
-            hydrated = await self._hydrate_media(message, payload.get("payload") or payload)
-            if self._on_message is not None:
-                await self._on_message(hydrated)
-        except Exception:
-            logger.exception("WAHA webhook processing failed")
+        hydrated = await self._hydrate_media(message, payload.get("payload") or payload)
+        if self._on_message is not None:
+            await self._on_message(hydrated)
 
     async def _hydrate_media(self, message: Message, payload: dict[str, Any]) -> Message:
         """Attach downloaded media bytes back to a normalized WAHA message.
@@ -391,14 +339,9 @@ class WAHATransport:
                 return replace(message, attachments=attachments)
             return replace(message, attachments=())
 
-        resolved_media_url = httpx.URL(media_url)
-        base_url = httpx.URL(self.base_url)
-        if resolved_media_url.host in {"localhost", "127.0.0.1", "::1"}:
-            resolved_media_url = resolved_media_url.copy_with(
-                scheme=base_url.scheme,
-                host=base_url.host,
-                port=base_url.port,
-            )
+        resolved_media_url = self._resolve_media_url(media_url, message.id)
+        if resolved_media_url is None:
+            return replace(message, attachments=())
 
         try:
             if self.session is None:
@@ -432,6 +375,30 @@ class WAHATransport:
         )
         attachments = (Attachment(attachment.mime_type, attachment.filename, data),)
         return replace(message, attachments=attachments)
+
+    def _resolve_media_url(self, media_url: Any, message_id: str) -> httpx.URL | None:
+        base_url = httpx.URL(self.base_url)
+        try:
+            resolved_media_url = base_url.join(str(media_url))
+        except TypeError, ValueError:
+            logger.warning("Skipping invalid WAHA media URL for message id=%s", message_id)
+            return None
+        if resolved_media_url.host in {"localhost", "127.0.0.1", "::1"}:
+            resolved_media_url = resolved_media_url.copy_with(
+                scheme=base_url.scheme,
+                host=base_url.host,
+                port=base_url.port,
+            )
+        if (
+            resolved_media_url.username
+            or resolved_media_url.password
+            or resolved_media_url.scheme != base_url.scheme
+            or resolved_media_url.host != base_url.host
+            or resolved_media_url.port != base_url.port
+        ):
+            logger.warning("Skipping WAHA media download from a non-WAHA origin for message id=%s", message_id)
+            return None
+        return resolved_media_url
 
     def _message_from_payload(self, payload: Any) -> Message | None:
         """Parse a WAHA event payload into the normalized Courier message model.
@@ -521,7 +488,7 @@ class WAHATransport:
         )
 
 
-def build_waha_transport(config: dict[str, Any]) -> WAHATransport:
+def build_waha_transport(config: AppConfig) -> WAHATransport:
     """Construct a WAHA transport using values from the app config.
 
     Args:
@@ -534,11 +501,11 @@ def build_waha_transport(config: dict[str, Any]) -> WAHATransport:
         ValueError: If required transport configuration values are missing.
     """
     return WAHATransport(
-        session_name=config.get("waha_session") or config.get("WAHA_SESSION") or "default",
-        base_url=config.get("waha_url") or config.get("WAHA_URL") or "http://localhost:3000",
-        api_key=config.get("waha_api_key") or config.get("WAHA_API_KEY") or "",
-        webhook_url=config.get("webhook_url") or config.get("WHATSAPP_HOOK_URL") or "http://bot:8000/webhook",
-        listen_port=int(config.get("listen_port") or 8000),
-        max_attachment_size=int(config.get("max_attachment_size") or 20 * 1024 * 1024),
-        include_from_me=config.get("include_from_me", False),
+        session_name=config.waha_session,
+        base_url=config.waha_url,
+        api_key=config.waha_api_key,
+        webhook_url=config.webhook_url,
+        listen_port=config.listen_port,
+        max_attachment_size=config.max_attachment_size,
+        include_from_me=config.include_from_me,
     )

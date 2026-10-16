@@ -87,3 +87,57 @@ async def test_forwarder_drops_duplicate_or_other_chat_messages():
     await forwarder.handle_message(other)
 
     assert len(transport.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_forwarder_retries_failed_send_and_deduplicates_after_success():
+    class FailOnceTransport(FakeTransport):
+        def __init__(self):
+            super().__init__()
+            self.fail = True
+
+        async def send(self, chat_id, text, attachments=()):
+            if self.fail:
+                self.fail = False
+                raise RuntimeError("temporary delivery failure")
+            await super().send(chat_id, text, attachments)
+
+    transport = FailOnceTransport()
+    forwarder = Forwarder(source_chat_id="source", target_chat_id="target", transport=transport)
+    message = Message(
+        id="retry-me",
+        chat_id="source",
+        sender_id="123",
+        sender_name="Alice",
+        text="message",
+        attachments=(),
+    )
+
+    with pytest.raises(RuntimeError, match="temporary delivery failure"):
+        await forwarder.handle_message(message)
+    await forwarder.handle_message(message)
+    await forwarder.handle_message(message)
+
+    assert len(transport.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_forwarder_bounds_successful_message_deduplication_cache():
+    transport = FakeTransport()
+    forwarder = Forwarder(source_chat_id="source", target_chat_id="target", transport=transport, recent_ids=1)
+
+    def message(message_id):
+        return Message(
+            id=message_id,
+            chat_id="source",
+            sender_id="123",
+            sender_name="Alice",
+            text=message_id,
+            attachments=(),
+        )
+
+    await forwarder.handle_message(message("first"))
+    await forwarder.handle_message(message("second"))
+    await forwarder.handle_message(message("first"))
+
+    assert [item["text"] for item in transport.sent] == ["first", "second", "first"]

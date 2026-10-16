@@ -8,7 +8,7 @@ The project is built with a transport abstraction so the message-forwarding logi
 
 - Forward message text and supported media from one WhatsApp chat to another
 - Filter by sender ID/name and/or keyword matches
-- Deduplicate recent incoming message IDs to avoid loops
+- Deduplicate up to 1,000 successfully forwarded message IDs in memory
 - Keep attachment handling isolated to the adapter layer
 - Run as a normal Python service or inside Docker
 
@@ -54,6 +54,8 @@ filters:
 Each configured keyword is matched as a case-insensitive substring of the message text or caption. If keywords are configured, a message must contain at least one of them to pass the keyword filter; media without a matching caption is not forwarded. Sender filters can also be configured.
 
 Courier forwards the original message text without adding a sender-name prefix. Images and videos are sent using WAHA's image and video endpoints respectively; other files are sent as attachments. On WAHA's ARM image, WEBJS cannot send inline videos, so Courier falls back to sending those videos as downloadable files. WhatsApp shows forwarded messages as sent by the Courier account, so the original sender attribution and all source-side formatting cannot be preserved as native WhatsApp metadata.
+
+Courier registers WAHA's exponential webhook retry policy (2-second initial delay, up to 10 attempts) unless the existing webhook already specifies retries. A delivery failure returns HTTP 500 so WAHA can retry; only successfully sent messages enter the in-memory deduplication cache. The cache is bounded and resets when Courier restarts, so WAHA retries are not a persistent queue. Media is fetched only from the configured WAHA origin; unsafe or unavailable media is skipped while the message text is retained.
 
 At startup, Courier logs the configured keywords and senders. When both are configured, the filters are combined with OR: a message passes if it matches either the keyword filter or sender filter. With no filters configured, all messages from the source chat are eligible.
 

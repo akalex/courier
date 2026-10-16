@@ -3,28 +3,29 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+from collections.abc import Callable
 
 from .adapters import build_waha_transport
-from .config import load_config
+from .config import AppConfig, load_config
 from .filters import AnyOf, KeywordFilter, SenderFilter
 from .forwarder import Forwarder
-from .ports import Filter
+from .ports import Filter, Transport
 
 
 logger = logging.getLogger(__name__)
 
-TRANSPORTS = {
+TRANSPORTS: dict[str, Callable[[AppConfig], Transport]] = {
     "waha": build_waha_transport,
 }
 
 FILTER_COMBINER = AnyOf
 
 
-def build_filter_policy(config: dict) -> Filter | None:
+def build_filter_policy(config: AppConfig) -> Filter | None:
     """Build the configured message filter policy from YAML and environment settings.
 
     Args:
-        config: The normalized application configuration dictionary.
+        config: The validated application configuration.
 
     Returns:
         A filter instance combining keyword and sender filters, or None if no filters
@@ -33,8 +34,8 @@ def build_filter_policy(config: dict) -> Filter | None:
     Raises:
         ValueError: If the configuration contains unsupported filter values.
     """
-    keywords = config.get("filters", {}).get("keywords", []) or []
-    senders = config.get("filters", {}).get("senders", []) or []
+    keywords = config.filters.keywords
+    senders = config.filters.senders
 
     filters: list[Filter] = []
     if keywords:
@@ -46,7 +47,7 @@ def build_filter_policy(config: dict) -> Filter | None:
     return FILTER_COMBINER(*filters)
 
 
-async def _shutdown(transport, stop_event: asyncio.Event) -> None:
+async def _shutdown(transport: Transport, stop_event: asyncio.Event) -> None:
     """Stop a transport and signal the server loop to exit cleanly.
 
     Args:
@@ -75,19 +76,18 @@ async def main() -> None:
     """
     config = load_config()
     logging.basicConfig(
-        level=getattr(logging, str(config["log_level"]).upper(), logging.INFO),
+        level=getattr(logging, config.log_level),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    transport_name = config["transport"]
+    transport_name = config.transport
     builder = TRANSPORTS.get(transport_name)
     if builder is None:
         raise ValueError(f"Unknown transport '{transport_name}'. Available: {', '.join(sorted(TRANSPORTS))}")
 
     transport = builder(config)
-    filter_config = config["filters"]
-    keywords = filter_config["keywords"]
-    senders = filter_config["senders"]
+    keywords = config.filters.keywords
+    senders = config.filters.senders
     if keywords or senders:
         logger.info(
             "Message filters: keywords=%s senders=%s (OR)",
@@ -98,12 +98,12 @@ async def main() -> None:
         logger.info("Message filters: none (all messages from the source chat are eligible)")
 
     forwarder = Forwarder(
-        source_chat_id=config["source_chat_id"],
-        target_chat_id=config["target_chat_id"],
+        source_chat_id=config.source_chat_id,
+        target_chat_id=config.target_chat_id,
         transport=transport,
         filter_policy=build_filter_policy(config),
         recent_ids=1000,
-        max_attachment_size=20 * 1024 * 1024,
+        max_attachment_size=config.max_attachment_size,
     )
 
     stop_event = asyncio.Event()
@@ -115,16 +115,16 @@ async def main() -> None:
     for signum in (signal.SIGINT, signal.SIGTERM):
         try:
             loop.add_signal_handler(signum, lambda: asyncio.create_task(_handle_signal()))
-        except (NotImplementedError, AttributeError):
+        except NotImplementedError, AttributeError:
             pass
 
     await transport.start(forwarder.handle_message)
     logger.info(
         "Courier started with source=%s target=%s transport=%s include_from_me=%s",
-        config["source_chat_id"],
-        config["target_chat_id"],
+        config.source_chat_id,
+        config.target_chat_id,
         transport_name,
-        config["include_from_me"],
+        config.include_from_me,
     )
     await stop_event.wait()
 

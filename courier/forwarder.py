@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import deque
+from collections import OrderedDict
 
 from .domain import Message
 from .filters import AllOf
@@ -39,8 +39,10 @@ class Forwarder:
         self.target_chat_id = target_chat_id
         self.transport = transport
         self.filter_policy = filter_policy or AllOf()
-        self._recent_ids: deque[str] = deque(maxlen=recent_ids)
-        self._recent_id_set: set[str] = set()
+        if recent_ids <= 0:
+            raise ValueError("recent_ids must be greater than zero")
+        self._recent_ids_limit = recent_ids
+        self._recent_ids: OrderedDict[str, None] = OrderedDict()
         self._lock = asyncio.Lock()
         self.max_attachment_size = max_attachment_size
 
@@ -51,35 +53,33 @@ class Forwarder:
             message: The incoming normalized message to process.
 
         Raises:
-            Exception: Any transport send failure is caught and logged internally.
+            Exception: If sending the message fails; the webhook layer uses this to request redelivery.
         """
         if message.chat_id != self.source_chat_id:
             logger.debug("Ignoring message from non-source chat_id=%s", message.chat_id)
             return
 
-        if message.id in self._recent_id_set:
-            logger.info("Dropping duplicate forwarded message id=%s", message.id)
-            return
-
-        if not self.filter_policy.matches(message):
-            logger.info("Filtered out message id=%s chat_id=%s", message.id, message.chat_id)
-            return
-
-        formatted_text = self._format_text(message)
-        attachments = self._sanitize_attachments(message)
-
         async with self._lock:
-            if message.id in self._recent_id_set:
-                logger.info("Duplicate observed while forwarding id=%s", message.id)
+            if message.id in self._recent_ids:
+                logger.info("Dropping duplicate forwarded message id=%s", message.id)
                 return
-            self._recent_ids.append(message.id)
-            self._recent_id_set.add(message.id)
 
-        try:
-            await self.transport.send(self.target_chat_id, formatted_text, attachments)
+            if not self.filter_policy.matches(message):
+                logger.info("Filtered out message id=%s chat_id=%s", message.id, message.chat_id)
+                return
+
+            formatted_text = self._format_text(message)
+            attachments = self._sanitize_attachments(message)
+            try:
+                await self.transport.send(self.target_chat_id, formatted_text, attachments)
+            except Exception:
+                logger.exception("Failed to forward message id=%s to chat_id=%s", message.id, self.target_chat_id)
+                raise
+
+            self._recent_ids[message.id] = None
+            if len(self._recent_ids) > self._recent_ids_limit:
+                self._recent_ids.popitem(last=False)
             logger.info("Forwarded message id=%s from chat_id=%s", message.id, message.chat_id)
-        except Exception:
-            logger.exception("Failed to forward message id=%s to chat_id=%s", message.id, self.target_chat_id)
 
     def _format_text(self, message: Message) -> str:
         """Preserve the original message text without adding a sender prefix.

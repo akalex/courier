@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Protocol, runtime_checkable
 
 from .domain import Attachment, Message
@@ -9,7 +10,7 @@ from .domain import Attachment, Message
 class Transport(Protocol):
     """A messaging transport that can receive and forward chat messages."""
 
-    async def start(self, on_message) -> None: ...
+    async def start(self, on_message: Callable[[Message], Awaitable[None]]) -> None: ...
 
     async def send(self, chat_id: str, text: str, attachments: tuple[Attachment, ...] = ()) -> None: ...
 
