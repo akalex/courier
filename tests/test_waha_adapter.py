@@ -129,6 +129,33 @@ async def test_send_builds_expected_request_body():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mime_type", "expected_endpoint"),
+    [
+        ("image/jpeg", "/api/sendImage"),
+        ("video/mp4", "/api/sendVideo"),
+        ("application/pdf", "/api/sendFile"),
+    ],
+)
+async def test_send_uses_media_specific_waha_endpoint(mime_type, expected_endpoint):
+    transport = WAHATransport(
+        session_name="demo",
+        base_url="http://waha",
+        api_key="secret",
+        webhook_url="http://bot/webhook",
+    )
+    transport.session = AsyncMock()
+    transport.session.post.return_value = httpx.Response(
+        200,
+        request=httpx.Request("POST", f"http://waha{expected_endpoint}"),
+    )
+
+    await transport.send("target@g.us", "caption", attachments=(Attachment(mime_type, "media", b"data"),))
+
+    assert transport.session.post.call_args.args[0] == expected_endpoint
+
+
+@pytest.mark.asyncio
 async def test_send_raises_for_waha_error_response():
     transport = WAHATransport(
         session_name="demo",

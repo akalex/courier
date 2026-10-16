@@ -6,7 +6,7 @@ The project is built with a transport abstraction so the message-forwarding logi
 
 ## Features
 
-- Forward messages from one WhatsApp chat to another
+- Forward message text and supported media from one WhatsApp chat to another
 - Filter by sender ID/name and/or keyword matches
 - Deduplicate recent incoming message IDs to avoid loops
 - Keep attachment handling isolated to the adapter layer
@@ -52,6 +52,8 @@ filters:
 ```
 
 Each configured keyword is matched as a case-insensitive substring of the message text or caption. If keywords are configured, a message must contain at least one of them to pass the keyword filter; media without a matching caption is not forwarded. Sender filters can also be configured.
+
+Courier forwards the original message text without adding a sender-name prefix. Images and videos are sent using WAHA's image and video endpoints respectively; other files are sent as attachments. WhatsApp shows forwarded messages as sent by the Courier account, so the original sender attribution and all source-side formatting cannot be preserved as native WhatsApp metadata.
 
 At startup, Courier logs the configured keywords and senders. When both are configured, the filters are combined with OR: a message passes if it matches either the keyword filter or sender filter. With no filters configured, all messages from the source chat are eligible.
 

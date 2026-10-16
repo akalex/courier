@@ -20,7 +20,7 @@ class FakeTransport:
 
 
 @pytest.mark.asyncio
-async def test_forwarder_filter_and_format_message():
+async def test_forwarder_preserves_message_text_and_forwards_attachment():
     transport = FakeTransport()
     forwarder = Forwarder(
         source_chat_id="source",
@@ -42,7 +42,7 @@ async def test_forwarder_filter_and_format_message():
     await forwarder.handle_message(message)
     assert len(transport.sent) == 1
     assert transport.sent[0]["chat_id"] == "target"
-    assert transport.sent[0]["text"].startswith("Alice:")
+    assert transport.sent[0]["text"] == "urgent update"
     assert transport.sent[0]["attachments"][0].filename == "file.png"
 
 

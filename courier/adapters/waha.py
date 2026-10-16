@@ -301,10 +301,12 @@ class WAHATransport:
             "file": file_payload,
         }
         if attachment.mime_type.startswith("image/"):
-            response = await self.session.post("/api/sendImage", json=payload)
-            response.raise_for_status()
-            return
-        response = await self.session.post("/api/sendFile", json=payload)
+            endpoint = "/api/sendImage"
+        elif attachment.mime_type.startswith("video/"):
+            endpoint = "/api/sendVideo"
+        else:
+            endpoint = "/api/sendFile"
+        response = await self.session.post(endpoint, json=payload)
         response.raise_for_status()
 
     async def _dispatch_message(self, message: Message, payload: dict[str, Any]) -> None:

@@ -82,17 +82,15 @@ class Forwarder:
             logger.exception("Failed to forward message id=%s to chat_id=%s", message.id, self.target_chat_id)
 
     def _format_text(self, message: Message) -> str:
-        """Format the message text with the sender name for the target chat.
+        """Preserve the original message text without adding a sender prefix.
 
         Args:
             message: Message to render into a forwarded text payload.
 
         Returns:
-            A sender-prefixed string suitable for forwarding.
+            The original message text.
         """
-        if not message.text:
-            return f"{message.sender_name}:"
-        return f"{message.sender_name}: {message.text}"
+        return message.text
 
     def _sanitize_attachments(self, message: Message):
         """Remove oversized attachments before sending them downstream.
