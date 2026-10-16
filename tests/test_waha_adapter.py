@@ -77,6 +77,33 @@ def test_messages_from_linked_account_are_opt_in():
     assert message.chat_id == "group-1@g.us"
 
 
+def test_message_any_from_linked_account_uses_recipient_chat_id():
+    transport = WAHATransport(
+        session_name="demo",
+        base_url="http://waha",
+        api_key="secret",
+        webhook_url="http://bot/webhook",
+        include_from_me=True,
+    )
+
+    message = transport._message_from_payload(
+        {
+            "event": "message.any",
+            "payload": {
+                "id": "msg-self",
+                "from": "linked-account@c.us",
+                "to": "group-1@g.us",
+                "fromMe": True,
+                "body": "sent by linked account",
+            },
+        }
+    )
+
+    assert message is not None
+    assert message.chat_id == "group-1@g.us"
+    assert message.text == "sent by linked account"
+
+
 @pytest.mark.asyncio
 async def test_send_builds_expected_request_body():
     transport = WAHATransport(
@@ -87,6 +114,10 @@ async def test_send_builds_expected_request_body():
         loop=None,
     )
     transport.session = AsyncMock()
+    transport.session.post.return_value = httpx.Response(
+        200,
+        request=httpx.Request("POST", "http://waha/api/sendImage"),
+    )
 
     await transport.send("1234567890@c.us", "hello", attachments=(Attachment("image/png", "x.png", b"123"),))
 
@@ -95,6 +126,24 @@ async def test_send_builds_expected_request_body():
     assert args[0].endswith("/sendImage")
     assert kwargs["json"]["chatId"] == "1234567890@c.us"
     assert kwargs["json"]["caption"] == "hello"
+
+
+@pytest.mark.asyncio
+async def test_send_raises_for_waha_error_response():
+    transport = WAHATransport(
+        session_name="demo",
+        base_url="http://waha",
+        api_key="secret",
+        webhook_url="http://bot/webhook",
+    )
+    transport.session = AsyncMock()
+    transport.session.post.return_value = httpx.Response(
+        400,
+        request=httpx.Request("POST", "http://waha/api/sendText"),
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await transport.send("1234567890@c.us", "hello")
 
 
 @pytest.mark.asyncio
@@ -156,7 +205,7 @@ async def test_ensure_waha_session_configures_existing_session():
             assert request.url.path == "/api/sessions/demo"
             config = json.loads(request.content)["config"]
             assert config["webhooks"] == [
-                {"url": "http://courier:8000/webhook", "events": ["session.status", "message"]},
+                {"url": "http://courier:8000/webhook", "events": ["session.status", "message", "message.any"]},
                 {"url": "http://other/webhook", "events": ["message"]},
             ]
             return httpx.Response(200, json={"name": "demo"})
@@ -187,7 +236,9 @@ async def test_ensure_waha_session_creates_and_starts_missing_session():
             body = json.loads(request.content)
             assert body == {
                 "name": "demo",
-                "config": {"webhooks": [{"url": "http://courier:8000/webhook", "events": ["message"]}]},
+                "config": {
+                    "webhooks": [{"url": "http://courier:8000/webhook", "events": ["message", "message.any"]}]
+                },
             }
             return httpx.Response(201, json={"name": "demo"})
         if request.method == "POST" and request.url.path == "/api/sessions/demo/start":

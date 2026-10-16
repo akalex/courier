@@ -44,6 +44,7 @@ def _coalesce(*values: Any) -> str:
 
 
 def _with_message_webhook(config: dict[str, Any], webhook_url: str) -> list[dict[str, Any]]:
+    required_events = ("message", "message.any")
     webhooks = config.get("webhooks") or []
     if not isinstance(webhooks, list) or not all(isinstance(hook, dict) for hook in webhooks):
         raise ValueError("WAHA returned an invalid session webhook config")
@@ -54,11 +55,10 @@ def _with_message_webhook(config: dict[str, Any], webhook_url: str) -> list[dict
             events = webhook.get("events") or []
             if not isinstance(events, list):
                 raise ValueError("WAHA returned an invalid webhook event config")
-            if "message" not in events:
-                webhook["events"] = [*events, "message"]
+            webhook["events"] = [*events, *(event for event in required_events if event not in events)]
             return configured_webhooks
 
-    configured_webhooks.append({"url": webhook_url, "events": ["message"]})
+    configured_webhooks.append({"url": webhook_url, "events": list(required_events)})
     return configured_webhooks
 
 
@@ -142,7 +142,7 @@ class WAHATransport:
                 "/api/sessions/",
                 json={
                     "name": self.session_name,
-                    "config": {"webhooks": [{"url": self.webhook_url, "events": ["message"]}]},
+                    "config": {"webhooks": [{"url": self.webhook_url, "events": ["message", "message.any"]}]},
                 },
             )
             response.raise_for_status()
@@ -267,10 +267,11 @@ class WAHATransport:
             raise RuntimeError("WAHA transport is not started")
 
         if not attachments:
-            await self.session.post(
+            response = await self.session.post(
                 "/api/sendText",
                 json={"session": self.session_name, "chatId": chat_id, "text": text},
             )
+            response.raise_for_status()
             return
 
         attachment = attachments[0]
@@ -280,10 +281,11 @@ class WAHATransport:
                 attachment.filename,
                 len(attachment.data),
             )
-            await self.session.post(
+            response = await self.session.post(
                 "/api/sendText",
                 json={"session": self.session_name, "chatId": chat_id, "text": text},
             )
+            response.raise_for_status()
             return
 
         file_payload = {
@@ -298,9 +300,11 @@ class WAHATransport:
             "file": file_payload,
         }
         if attachment.mime_type.startswith("image/"):
-            await self.session.post("/api/sendImage", json=payload)
+            response = await self.session.post("/api/sendImage", json=payload)
+            response.raise_for_status()
             return
-        await self.session.post("/api/sendFile", json=payload)
+        response = await self.session.post("/api/sendFile", json=payload)
+        response.raise_for_status()
 
     async def _dispatch_message(self, message: Message, payload: dict[str, Any]) -> None:
         """Hydrate and dispatch a WAHA message through the forwarder callback.
@@ -409,7 +413,7 @@ class WAHATransport:
             return None
 
         event = payload.get("event")
-        if event and event != "message":
+        if event and event not in {"message", "message.any"}:
             return None
 
         event_data = payload.get("payload") if isinstance(payload.get("payload"), dict) else payload
@@ -425,6 +429,7 @@ class WAHATransport:
             event_data.get("chatId"),
             event_data.get("chat_id"),
             (event_data.get("chat") or {}).get("id"),
+            event_data.get("to") if from_me is True else event_data.get("from"),
         )
         if not chat_id:
             return None
