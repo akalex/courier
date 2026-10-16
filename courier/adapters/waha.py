@@ -272,7 +272,7 @@ class WAHATransport:
                 "/api/sendText",
                 json={"session": self.session_name, "chatId": chat_id, "text": text},
             )
-            response.raise_for_status()
+            self._raise_for_status(response)
             return
 
         attachment = attachments[0]
@@ -286,7 +286,7 @@ class WAHATransport:
                 "/api/sendText",
                 json={"session": self.session_name, "chatId": chat_id, "text": text},
             )
-            response.raise_for_status()
+            self._raise_for_status(response)
             return
 
         file_payload = {
@@ -307,7 +307,21 @@ class WAHATransport:
         else:
             endpoint = "/api/sendFile"
         response = await self.session.post(endpoint, json=payload)
-        response.raise_for_status()
+        self._raise_for_status(response)
+
+    @staticmethod
+    def _raise_for_status(response: httpx.Response) -> None:
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError:
+            logger.error(
+                "WAHA request %s %s failed with status %s: %s",
+                response.request.method,
+                response.request.url.path,
+                response.status_code,
+                response.text[:1000],
+            )
+            raise
 
     async def _dispatch_message(self, message: Message, payload: dict[str, Any]) -> None:
         """Hydrate and dispatch a WAHA message through the forwarder callback.

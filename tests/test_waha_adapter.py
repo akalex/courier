@@ -156,7 +156,7 @@ async def test_send_uses_media_specific_waha_endpoint(mime_type, expected_endpoi
 
 
 @pytest.mark.asyncio
-async def test_send_raises_for_waha_error_response():
+async def test_send_logs_waha_error_response(caplog):
     transport = WAHATransport(
         session_name="demo",
         base_url="http://waha",
@@ -165,12 +165,14 @@ async def test_send_raises_for_waha_error_response():
     )
     transport.session = AsyncMock()
     transport.session.post.return_value = httpx.Response(
-        400,
+        422,
+        json={"message": ["file.data must be base64 encoded"]},
         request=httpx.Request("POST", "http://waha/api/sendText"),
     )
 
     with pytest.raises(httpx.HTTPStatusError):
         await transport.send("1234567890@c.us", "hello")
+    assert "file.data must be base64 encoded" in caplog.text
 
 
 @pytest.mark.asyncio
