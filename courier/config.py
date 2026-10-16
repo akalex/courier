@@ -110,10 +110,10 @@ def load_config(path: str | os.PathLike[str] | None = None) -> dict[str, Any]:
         "WHATSAPP_HOOK_URL",
         config.get("webhook_url") or "http://localhost:8000/webhook",
     )
-    config["include_from_me"] = _coerce_bool(
-        os.getenv("INCLUDE_FROM_ME", config.get("include_from_me", False)),
-        name="include_from_me",
-    )
+    include_from_me = os.getenv("INCLUDE_FROM_ME")
+    if include_from_me is None or not include_from_me.strip():
+        include_from_me = config.get("include_from_me", False)
+    config["include_from_me"] = _coerce_bool(include_from_me, name="include_from_me")
 
     filters_cfg = config.get("filters") or {}
     if not isinstance(filters_cfg, dict):

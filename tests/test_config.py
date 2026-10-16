@@ -46,6 +46,13 @@ def test_include_from_me_defaults_to_false_and_can_be_enabled(tmp_path, monkeypa
 
     assert load_config(path)["include_from_me"] is False
 
+    path.write_text(
+        "source_chat_id: source\ntarget_chat_id: target\ninclude_from_me: true\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("INCLUDE_FROM_ME", "")
+    assert load_config(path)["include_from_me"] is True
+
     monkeypatch.setenv("INCLUDE_FROM_ME", "true")
     assert load_config(path)["include_from_me"] is True
 
