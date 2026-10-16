@@ -7,6 +7,7 @@ Courier receives WhatsApp messages from WAHA over its HTTP webhook and sends the
 ## Contents
 
 - [How it works](#how-it-works)
+- [Routing examples](#routing-examples)
 - [Message behavior and limitations](#message-behavior-and-limitations)
 - [Configuration reference](#configuration-reference)
 - [Run locally](#run-locally)
@@ -53,6 +54,56 @@ The WhatsApp source requires two separate WAHA network paths:
 - WAHA must be able to call Courier at `WHATSAPP_HOOK_URL` to deliver incoming events.
 
 If WAHA runs on another VM, both paths must be routable between the machines. Prefer a private network/VPN or TLS-protected endpoints with firewall rules allowing only the required traffic. Do not publish WAHA's unauthenticated or unencrypted API port directly to the internet.
+
+## Routing examples
+
+Courier currently receives messages from WhatsApp through WAHA. Select the destination with `destination_transport` and set `target_chat_id` to the destination chat or room. The examples below assume WAHA connection settings (`waha_url`, `waha_api_key`, `waha_session`, and `webhook_url`) are configured as shown in the [configuration reference](#configuration-reference).
+
+### 1. WhatsApp → WhatsApp
+
+Use the WhatsApp chat IDs returned by WAHA for both the source and target:
+
+```yaml
+source_transport: waha
+destination_transport: waha
+source_chat_id: "120363123456789012@g.us"
+target_chat_id: "120363987654321098@g.us"
+
+waha:
+  url: "http://localhost:3000"
+  api_key: "your-waha-api-key"
+  session: "default"
+
+webhook_url: "http://localhost:8000/webhook"
+```
+
+The message is sent to the target WhatsApp chat by the linked WhatsApp account.
+
+### 2. WhatsApp → Element
+
+Element connects to a Matrix homeserver, so use the homeserver URL and a Matrix room ID. The Matrix account represented by the access token must already have joined that room:
+
+```yaml
+source_transport: waha
+destination_transport: matrix
+source_chat_id: "120363123456789012@g.us"
+target_chat_id: "!roomid:example.org"
+
+waha:
+  url: "http://localhost:3000"
+  api_key: "your-waha-api-key"
+  session: "default"
+
+webhook_url: "http://localhost:8000/webhook"
+
+matrix:
+  homeserver_url: "https://matrix.example.org"
+  access_token: "your-matrix-access-token"
+```
+
+Keep the Matrix access token secret. You can set it through `MATRIX_ACCESS_TOKEN` instead of putting it in the YAML file. Text and supported media are sent to the configured room.
+
+For either route, add the existing `filters` settings to the same YAML file if you want to filter messages. In Docker deployments, WAHA must be able to reach Courier at `WHATSAPP_HOOK_URL`; use a network-reachable hostname rather than `localhost` when the services run in separate containers.
 
 ## Message behavior and limitations
 
