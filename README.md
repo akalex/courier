@@ -519,9 +519,9 @@ To upgrade later, change `COURIER_TAG` in `.env` to `latest`, an exact SemVer ta
 
 ### Releases and image tags
 
-`pyproject.toml` is the version source of truth. For each release, update its `project.version`, move the release notes from the `Unreleased` section in `CHANGELOG.md` into a dated `X.Y.Z` section, then push a tag matching that version, without a `v` prefix (for example, `0.1.1`). The Release workflow verifies the tag matches `pyproject.toml` before publishing.
+`pyproject.toml` is the version source of truth. For each release, update its `project.version`, move the release notes from the `Unreleased` section in `CHANGELOG.md` into a dated `X.Y.Z` section, then push a tag matching that version, without a `v` prefix (for example, `0.1.1`). The Release workflow runs only for numeric SemVer tags and verifies that the tag matches `pyproject.toml` before publishing. Pushes to branches run CI but do not publish Docker images.
 
-Main-branch builds publish `latest`, `main`, and the full commit SHA. A SemVer tag publishes `X.Y.Z`, `X.Y`, and `X` image tags as well as the full commit SHA. Use an exact `X.Y.Z` tag for a pinned deployment; the shorter tags move when a newer matching release is published.
+A SemVer tag publishes `X.Y.Z`, `X.Y`, `X`, `latest`, and the full commit SHA image tags. Use an exact `X.Y.Z` tag for a pinned deployment; the shorter tags and `latest` move when a newer matching release is published.
 
 Runtime credentials stay on the VM in the ignored `.env` file, not in Git. WAHA's web UI is bound to the VM's loopback interface; use the HTTPS Nginx proxy for browser access and never expose port `3000` publicly.
 
