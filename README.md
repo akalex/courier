@@ -49,9 +49,11 @@ uv sync --dev
 
 1. Courier loads and validates its settings from YAML and environment variables.
 2. It connects to the configured WhatsApp source (currently WAHA) using the configured API key.
-3. It finds or creates the configured WAHA session, registers its webhook for `message` and `message.any`, and starts the session if needed.
+3. It finds or creates the configured WAHA session, registers its webhook for `message`, `message.any`, and `session.status`, and starts the session if needed.
 4. WAHA sends message events to Courier's `POST /webhook` endpoint.
 5. Courier ignores events outside the configured source chat, applies filters, and sends the message to the configured destination.
+
+Courier also sends health notifications to `alert_chat_id` (or `ALERT_CHAT_ID`), defaulting to `target_chat_id`, when the WAHA session stops, fails, or needs QR authentication, or when the WAHA API becomes unavailable. It checks worker/session health every 30 seconds and sends a recovery notification after service resumes. For a WAHA destination, set this to the other recipient's WAHA chat ID, such as `15551234567@c.us`.
 
 Courier also exposes `GET /health` on the same listen port. The webhook server binds to all container interfaces; in a Compose deployment, WAHA should reach it through the private service network. Do not expose the webhook port to the public internet unless it is protected by an appropriate network or authentication layer.
 
@@ -172,6 +174,7 @@ filters:
 | Destination transport | `DESTINATION_TRANSPORT` | `destination_transport` | Inherits `TRANSPORT` or defaults to `waha`; supports `waha` or `matrix` |
 | Source chat ID | `SOURCE_CHAT_ID` | `source_chat_id` | Required |
 | Destination chat/room ID | `TARGET_CHAT_ID` | `target_chat_id` | Required; for Matrix use the room ID, e.g. `!roomid:example.org` |
+| Health alert chat/room ID | `ALERT_CHAT_ID` | `alert_chat_id` | Defaults to `TARGET_CHAT_ID`; for WAHA use the recipient chat ID, e.g. `15551234567@c.us` |
 | Webhook listen port | `LISTEN_PORT` | `listen_port` | `8000`; must be a positive integer |
 | Log level | `LOG_LEVEL` | `log_level` | `INFO`; must be a recognized Python logging level |
 | WAHA base URL | `WAHA_URL` | `waha_url` or `waha.url` | `http://localhost:3000` |

@@ -20,6 +20,7 @@ transport: waha
 
     cfg = load_config(path)
     assert cfg.source_chat_id == "source"
+    assert cfg.alert_chat_id == "target"
     assert cfg.filters.keywords == ("urgent",)
     assert cfg.filters.exclude_keywords == ("city", "New York")
     assert cfg.listen_port == 8000
@@ -76,6 +77,22 @@ def test_matrix_credentials_can_be_configured_from_environment(tmp_path, monkeyp
 
     assert cfg.matrix_homeserver_url == "https://matrix.example.org"
     assert cfg.matrix_access_token == "environment-token"
+
+
+def test_alert_chat_id_can_be_configured_separately(tmp_path, monkeypatch):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "source_chat_id: source\ntarget_chat_id: target\nalert_chat_id: '15551234567@c.us'\n",
+        encoding="utf-8",
+    )
+
+    assert load_config(path).alert_chat_id == "15551234567@c.us"
+
+    monkeypatch.setenv("ALERT_CHAT_ID", "15557654321@c.us")
+    assert load_config(path).alert_chat_id == "15557654321@c.us"
+
+    monkeypatch.setenv("ALERT_CHAT_ID", "")
+    assert load_config(path).alert_chat_id == "15551234567@c.us"
 
 
 def test_transport_setting_remains_a_legacy_default_for_source_and_destination(tmp_path):

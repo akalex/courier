@@ -439,7 +439,7 @@ async def test_ensure_waha_session_creates_and_starts_missing_session():
                     "webhooks": [
                         {
                             "url": "http://courier:8000/webhook",
-                            "events": ["message", "message.any"],
+                            "events": ["message", "message.any", "session.status"],
                             "retries": {"policy": "exponential", "delaySeconds": 2, "attempts": 10},
                         }
                     ]
@@ -495,3 +495,70 @@ async def test_dispatches_message_from_webhook_payload():
 
     transport._on_message.assert_awaited_once()
     assert transport._on_message.await_args.args[0].id == "msg-2"
+
+
+@pytest.mark.asyncio
+async def test_session_status_webhook_alerts_once_until_recovery():
+    transport = WAHATransport(
+        session_name="demo",
+        base_url="http://waha",
+        api_key="secret",
+        webhook_url="http://bot/webhook",
+    )
+    transport._alert_handler = AsyncMock()
+
+    stopped = {"event": "session.status", "session": "demo", "payload": {"status": "STOPPED"}}
+    await transport._handle_webhook(stopped)
+    await transport._handle_webhook(stopped)
+    await transport._handle_webhook(
+        {"event": "session.status", "session": "demo", "payload": {"status": "WORKING"}}
+    )
+
+    assert [call.args[0] for call in transport._alert_handler.await_args_list] == [
+        "WAHA session demo is STOPPED.",
+        "WAHA session demo and worker recovered.",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_health_check_notifies_when_waha_worker_is_unavailable_and_recovers():
+    responses = [httpx.Response(503), httpx.Response(200, json={"status": "WORKING"})]
+
+    async def handler(request):
+        return responses.pop(0)
+
+    transport = WAHATransport(
+        session_name="demo",
+        base_url="http://waha",
+        api_key="secret",
+        webhook_url="http://bot/webhook",
+    )
+    transport._alert_handler = AsyncMock()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://waha") as client:
+        transport.session = client
+        await transport._check_session_health()
+        await transport._check_session_health()
+
+    assert [call.args[0] for call in transport._alert_handler.await_args_list] == [
+        "WAHA worker returned HTTP 503 while checking session demo.",
+        "WAHA session demo and worker recovered.",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_health_check_reports_missing_session_separately_from_worker_failure():
+    async def handler(request):
+        return httpx.Response(404, request=request)
+
+    transport = WAHATransport(
+        session_name="demo",
+        base_url="http://waha",
+        api_key="secret",
+        webhook_url="http://bot/webhook",
+    )
+    transport._alert_handler = AsyncMock()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://waha") as client:
+        transport.session = client
+        await transport._check_session_health()
+
+    transport._alert_handler.assert_awaited_once_with("WAHA session demo no longer exists (HTTP 404).")

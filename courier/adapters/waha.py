@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from typing import Any
 from urllib.parse import quote
@@ -15,6 +16,9 @@ from ..webhook_server import WebhookServer
 
 
 logger = logging.getLogger(__name__)
+HEALTHY_SESSION_STATUSES = {"WORKING"}
+UNHEALTHY_SESSION_STATUSES = {"FAILED", "STOPPED", "SCAN_QR", "EXPIRED", "TERMINATED", "LOGGED_OUT"}
+SESSION_MONITOR_INTERVAL = 30
 
 
 def _first(mapping: dict[str, Any], *keys: str) -> Any:
@@ -45,8 +49,8 @@ def _coalesce(*values: Any) -> str:
     return ""
 
 
-def _with_message_webhook(config: dict[str, Any], webhook_url: str) -> list[dict[str, Any]]:
-    required_events = ("message", "message.any")
+def _with_required_events(config: dict[str, Any], webhook_url: str) -> list[dict[str, Any]]:
+    required_events = ("message", "message.any", "session.status")
     default_retries = {"policy": "exponential", "delaySeconds": 2, "attempts": 10}
     webhooks = config.get("webhooks") or []
     if not isinstance(webhooks, list) or not all(isinstance(hook, dict) for hook in webhooks):
@@ -91,6 +95,9 @@ class WAHATransport:
         self.include_from_me = include_from_me
         self.session: httpx.AsyncClient | None = None
         self._on_message = None
+        self._alert_handler: Callable[[str], Awaitable[None]] | None = None
+        self._monitor_task: asyncio.Task[None] | None = None
+        self._active_alert: str | None = None
         self._webhook_server = WebhookServer(
             host="0.0.0.0",
             port=self.listen_port,
@@ -119,10 +126,15 @@ class WAHATransport:
         try:
             await self._webhook_server.start()
             await self._ensure_waha_session()
+            if self._alert_handler is not None:
+                self._monitor_task = asyncio.create_task(self._monitor_session())
         except Exception:
             await self.stop()
             raise
         logger.info("WAHA transport started for %s", self.base_url)
+
+    def set_alert_handler(self, handler: Callable[[str], Awaitable[None]]) -> None:
+        self._alert_handler = handler
 
     async def _ensure_waha_session(self) -> None:
         """Create or configure the WAHA session and enable message webhooks."""
@@ -156,7 +168,7 @@ class WAHATransport:
                         "webhooks": [
                             {
                                 "url": self.webhook_url,
-                                "events": ["message", "message.any"],
+                                "events": ["message", "message.any", "session.status"],
                                 "retries": {
                                     "policy": "exponential",
                                     "delaySeconds": 2,
@@ -177,7 +189,7 @@ class WAHATransport:
             config = session_data.get("config") or {}
             if not isinstance(config, dict):
                 raise ValueError("WAHA returned an invalid session config")
-            config["webhooks"] = _with_message_webhook(config, self.webhook_url)
+            config["webhooks"] = _with_required_events(config, self.webhook_url)
             response = await self.session.put(
                 session_path,
                 json={"name": self.session_name, "config": config},
@@ -191,12 +203,107 @@ class WAHATransport:
         logger.info("Configured WAHA session %s webhook for %s", self.session_name, self.webhook_url)
 
     async def _handle_webhook(self, payload: dict[str, Any]) -> None:
+        if payload.get("event") == "session.status":
+            await self._handle_session_status(payload)
+            return
         message = self._message_from_payload(payload)
         if message is not None:
             await self._dispatch_message(message, payload)
 
+    async def _handle_session_status(self, event: dict[str, Any]) -> None:
+        event_payload = event.get("payload")
+        data = event_payload if isinstance(event_payload, dict) else event
+        event_session = data.get("session") or event.get("session")
+        if event_session and event_session != self.session_name:
+            return
+
+        status = str(data.get("status", "")).upper()
+        if status in HEALTHY_SESSION_STATUSES:
+            await self._report_health(None)
+        elif status in UNHEALTHY_SESSION_STATUSES:
+            await self._report_health(
+                "session:unhealthy",
+                f"WAHA session {self.session_name} is {status}.",
+            )
+
+    async def _monitor_session(self) -> None:
+        while True:
+            await asyncio.sleep(SESSION_MONITOR_INTERVAL)
+            if self.session is None:
+                return
+            await self._check_session_health()
+
+    async def _check_session_health(self) -> None:
+        if self.session is None:
+            return
+        try:
+            response = await self.session.get(f"/api/sessions/{quote(self.session_name, safe='')}")
+            response.raise_for_status()
+            session_data = response.json()
+            if not isinstance(session_data, dict):
+                raise ValueError("WAHA returned an invalid session response")
+            await self._handle_session_status(
+                {"session": self.session_name, "payload": {"status": session_data.get("status", "")}}
+            )
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code
+            if status_code == 404:
+                await self._report_health(
+                    "session:missing",
+                    f"WAHA session {self.session_name} no longer exists (HTTP 404).",
+                )
+            elif status_code >= 500:
+                await self._report_health(
+                    "worker:unavailable",
+                    f"WAHA worker returned HTTP {status_code} while checking session {self.session_name}.",
+                )
+            else:
+                await self._report_health(
+                    f"api:http-{status_code}",
+                    f"WAHA health check for session {self.session_name} returned HTTP {status_code}.",
+                )
+            logger.warning("WAHA session health check failed", exc_info=True)
+        except httpx.TransportError:
+            logger.warning("WAHA session health check failed", exc_info=True)
+            await self._report_health(
+                "worker:unavailable",
+                f"WAHA worker is unavailable while checking session {self.session_name}.",
+            )
+        except ValueError:
+            logger.warning("WAHA session health check returned an invalid response", exc_info=True)
+            await self._report_health(
+                "api:invalid-response",
+                f"WAHA returned an invalid health response for session {self.session_name}.",
+            )
+
+    async def _report_health(self, issue: str | None, message: str | None = None) -> None:
+        if issue == self._active_alert:
+            return
+        if issue is None and self._active_alert is None:
+            return
+
+        self._active_alert = issue
+        alert = (
+            f"WAHA session {self.session_name} and worker recovered."
+            if issue is None
+            else message or f"WAHA health issue: {issue}."
+        )
+        logger.warning("%s", alert)
+        if self._alert_handler is not None:
+            try:
+                await self._alert_handler(alert)
+            except Exception:
+                logger.exception("Failed to deliver WAHA health notification")
+
     async def stop(self) -> None:
         """Close the underlying WAHA session and any local webhooks."""
+        if self._monitor_task is not None:
+            self._monitor_task.cancel()
+            try:
+                await self._monitor_task
+            except asyncio.CancelledError:
+                pass
+            self._monitor_task = None
         await self._webhook_server.stop()
         if self.session is not None and not self.session.is_closed:
             await self.session.aclose()

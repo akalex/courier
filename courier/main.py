@@ -5,7 +5,7 @@ import logging
 import signal
 from collections.abc import Callable
 
-from .adapters import build_matrix_destination, build_waha_transport
+from .adapters import WAHATransport, build_matrix_destination, build_waha_transport
 from .config import AppConfig, load_config
 from .filters import AllOf, AnyOf, ExcludeKeywordFilter, KeywordFilter, SenderFilter
 from .forwarder import Forwarder
@@ -140,6 +140,9 @@ async def main() -> None:
     )
 
     stop_event = asyncio.Event()
+
+    if isinstance(source, WAHATransport):
+        source.set_alert_handler(lambda text: destination.send(config.alert_chat_id, text))
 
     async def _handle_signal() -> None:
         await _shutdown(source, destination, stop_event)

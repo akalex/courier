@@ -23,6 +23,7 @@ class AppConfig:
     destination_transport: str
     source_chat_id: str
     target_chat_id: str
+    alert_chat_id: str
     listen_port: int
     log_level: str
     waha_url: str
@@ -204,6 +205,10 @@ def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
 
     source_chat_id = _coerce_string(os.getenv("SOURCE_CHAT_ID", raw.get("source_chat_id")), name="source_chat_id")
     target_chat_id = _coerce_string(os.getenv("TARGET_CHAT_ID", raw.get("target_chat_id")), name="target_chat_id")
+    alert_chat_id = _coerce_string(
+        os.getenv("ALERT_CHAT_ID") or raw.get("alert_chat_id") or target_chat_id,
+        name="alert_chat_id",
+    )
     listen_port = _coerce_int(os.getenv("LISTEN_PORT", raw.get("listen_port", 8000)), name="listen_port")
     max_attachment_size = _coerce_int(
         raw.get("max_attachment_size", 20 * 1024 * 1024),
@@ -256,6 +261,7 @@ def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
         destination_transport=destination_transport,
         source_chat_id=source_chat_id,
         target_chat_id=target_chat_id,
+        alert_chat_id=alert_chat_id,
         listen_port=listen_port,
         log_level=log_level,
         waha_url=waha_url,
