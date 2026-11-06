@@ -515,7 +515,13 @@ Each Courier process/container manages exactly one WAHA session and one source-t
 
 For group IDs, use WAHA Swagger's `GET /api/{session}/chats`, find each group by name, and copy its `id` exactly. Group IDs usually end in `@g.us`. Update `SOURCE_CHAT_ID` and `TARGET_CHAT_ID` and recreate the Courier container.
 
-To upgrade later, change `COURIER_TAG` in `.env` to `latest` or a commit SHA, then run `docker compose pull courier && docker compose up -d courier`. Using a commit-SHA tag makes rollbacks reproducible. If you do have repository access on the VM, cloning it is also an option; run Compose from the directory containing `docker-compose.yml`.
+To upgrade later, change `COURIER_TAG` in `.env` to `latest`, an exact SemVer tag such as `0.1.0`, or a commit SHA, then run `docker compose pull courier && docker compose up -d courier`. Exact version and commit-SHA tags make rollbacks reproducible. If you do have repository access on the VM, cloning it is also an option; run Compose from the directory containing `docker-compose.yml`.
+
+### Releases and image tags
+
+`pyproject.toml` is the version source of truth. For each release, update its `project.version`, move the release notes from the `Unreleased` section in `CHANGELOG.md` into a dated `X.Y.Z` section, then push a tag matching that version, without a `v` prefix (for example, `0.1.1`). The Release workflow verifies the tag matches `pyproject.toml` before publishing.
+
+Main-branch builds publish `latest`, `main`, and the full commit SHA. A SemVer tag publishes `X.Y.Z`, `X.Y`, and `X` image tags as well as the full commit SHA. Use an exact `X.Y.Z` tag for a pinned deployment; the shorter tags move when a newer matching release is published.
 
 Runtime credentials stay on the VM in the ignored `.env` file, not in Git. WAHA's web UI is bound to the VM's loopback interface; use the HTTPS Nginx proxy for browser access and never expose port `3000` publicly.
 
