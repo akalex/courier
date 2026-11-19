@@ -2,6 +2,12 @@
 
 Notable changes to Courier are documented here. This changelog follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use Semantic Versioning.
 
+## [0.1.1] - 2026-11-19
+
+### Changed
+
+- Identify WAHA health notifications as Courier Bot and use clearer recovery wording.
+
 ## [0.1.0] - 2026-11-06
 
 ### Added

@@ -284,9 +284,9 @@ class WAHATransport:
 
         self._active_alert = issue
         alert = (
-            f"WAHA session {self.session_name} and worker recovered."
+            f"[Courier Bot] Recovery update: WAHA session {self.session_name} and worker are back online."
             if issue is None
-            else message or f"WAHA health issue: {issue}."
+            else f"[Courier Bot] {message or f'WAHA health issue: {issue}.'}"
         )
         logger.warning("%s", alert)
         if self._alert_handler is not None:

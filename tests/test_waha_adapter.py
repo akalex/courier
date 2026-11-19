@@ -515,8 +515,8 @@ async def test_session_status_webhook_alerts_once_until_recovery():
     )
 
     assert [call.args[0] for call in transport._alert_handler.await_args_list] == [
-        "WAHA session demo is STOPPED.",
-        "WAHA session demo and worker recovered.",
+        "[Courier Bot] WAHA session demo is STOPPED.",
+        "[Courier Bot] Recovery update: WAHA session demo and worker are back online.",
     ]
 
 
@@ -540,8 +540,8 @@ async def test_health_check_notifies_when_waha_worker_is_unavailable_and_recover
         await transport._check_session_health()
 
     assert [call.args[0] for call in transport._alert_handler.await_args_list] == [
-        "WAHA worker returned HTTP 503 while checking session demo.",
-        "WAHA session demo and worker recovered.",
+        "[Courier Bot] WAHA worker returned HTTP 503 while checking session demo.",
+        "[Courier Bot] Recovery update: WAHA session demo and worker are back online.",
     ]
 
 
@@ -561,4 +561,4 @@ async def test_health_check_reports_missing_session_separately_from_worker_failu
         transport.session = client
         await transport._check_session_health()
 
-    transport._alert_handler.assert_awaited_once_with("WAHA session demo no longer exists (HTTP 404).")
+    transport._alert_handler.assert_awaited_once_with("[Courier Bot] WAHA session demo no longer exists (HTTP 404).")
