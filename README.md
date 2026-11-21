@@ -261,7 +261,7 @@ GitHub Actions runs CI on pushes and pull requests. After CI passes on `main`, i
 
 Image publishing does not deploy automatically. You do not need to clone this private repository on the VM: deploy the published image using a Compose file created there.
 
-The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image includes an ARM64 build and Docker selects it automatically. The Compose file defaults to WAHA's ARM image tag, `devlikeapro/waha:arm`. If inline WEBJS video is unavailable, WAHA also provides the ARM64 `devlikeapro/waha:noweb-arm` image; test the NOWEB engine by setting `WAHA_IMAGE=devlikeapro/waha:noweb-arm` and `WHATSAPP_DEFAULT_ENGINE=NOWEB` in `.env`. Use a separate WAHA session name when testing another engine so the existing session remains available for rollback, and pair the new session from the Dashboard. WAHA's `devlikeapro/waha:chrome` image supports inline WEBJS video but is amd64-only; it will not run natively on ARM64.
+The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image includes an ARM64 build and Docker selects it automatically. The Compose file defaults to WAHA's ARM NOWEB image, `devlikeapro/waha:noweb-arm`, with `WHATSAPP_DEFAULT_ENGINE=NOWEB`. Override `WAHA_IMAGE` and `WHATSAPP_DEFAULT_ENGINE` in `.env` to select another image or engine. Use a separate WAHA session name when testing another engine so the existing session remains available for rollback, and pair the new session from the Dashboard. WAHA's `devlikeapro/waha:chrome` image supports inline WEBJS video but is amd64-only; it will not run natively on ARM64.
 
 1. Install Docker with the Compose plugin on the Oracle VM.
 2. If the GHCR package is private, create a GitHub token with `read:packages` and authenticate Docker on the VM. If the package is public, skip this step:
@@ -337,7 +337,7 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
 
    services:
      waha:
-       image: ${WAHA_IMAGE:-devlikeapro/waha:arm}
+       image: ${WAHA_IMAGE:-devlikeapro/waha:noweb-arm}
        restart: unless-stopped
        ports:
          - "127.0.0.1:3000:3000"
@@ -349,7 +349,8 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
          WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:?Set WAHA_DASHBOARD_PASSWORD in .env}
          WHATSAPP_SWAGGER_USERNAME: ${WHATSAPP_SWAGGER_USERNAME:?Set WHATSAPP_SWAGGER_USERNAME in .env}
          WHATSAPP_SWAGGER_PASSWORD: ${WHATSAPP_SWAGGER_PASSWORD:?Set WHATSAPP_SWAGGER_PASSWORD in .env}
-         WHATSAPP_DEFAULT_ENGINE: ${WHATSAPP_DEFAULT_ENGINE:-WEBJS}
+         WHATSAPP_DEFAULT_ENGINE: ${WHATSAPP_DEFAULT_ENGINE:-NOWEB}
+         WAHA_PRINT_QR: "False"
 
      courier-aircraft-losses:
        <<: *courier-common

@@ -19,3 +19,17 @@ def test_only_dedicated_health_container_sends_health_alerts():
     assert compose["services"]["courier-tfl"]["environment"]["HEALTH_ALERTS_ENABLED"] is False
     assert compose["services"]["courier-health"]["environment"]["HEALTH_ALERTS_ENABLED"] is True
     assert compose["services"]["courier-health"]["environment"]["HEALTH_MONITOR_ONLY"] is True
+
+
+def test_waha_does_not_print_qr_codes_to_logs():
+    compose = yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))
+
+    assert compose["services"]["waha"]["environment"]["WAHA_PRINT_QR"] == "False"
+
+
+def test_waha_defaults_to_noweb_arm():
+    compose = yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))
+    waha = compose["services"]["waha"]
+
+    assert waha["image"] == "${WAHA_IMAGE:-devlikeapro/waha:noweb-arm}"
+    assert waha["environment"]["WHATSAPP_DEFAULT_ENGINE"] == "${WHATSAPP_DEFAULT_ENGINE:-NOWEB}"

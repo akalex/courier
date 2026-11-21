@@ -2,6 +2,17 @@
 
 Notable changes to Courier are documented here. This changelog follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use Semantic Versioning.
 
+## [0.4.3] - 2026-11-21
+
+### Fixed
+
+- Disable WAHA QR-code output in container logs.
+- Retry WAHA session setup after an HTTP request timeout.
+
+### Changed
+
+- Default WAHA to the `noweb-arm` image and NOWEB engine.
+
 ## [0.4.2] - 2026-11-21
 
 ### Fixed

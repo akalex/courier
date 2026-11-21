@@ -155,8 +155,8 @@ class WAHATransport:
             except httpx.HTTPStatusError as exc:
                 if (
                     exc.response.status_code < HTTPStatus.INTERNAL_SERVER_ERROR
-                    or attempt + 1 == SESSION_SETUP_MAX_ATTEMPTS
-                ):
+                    and exc.response.status_code != HTTPStatus.REQUEST_TIMEOUT
+                ) or attempt + 1 == SESSION_SETUP_MAX_ATTEMPTS:
                     raise
             except httpx.TransportError:
                 if attempt + 1 == SESSION_SETUP_MAX_ATTEMPTS:

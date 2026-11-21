@@ -478,6 +478,41 @@ async def test_ensure_waha_session_configures_existing_session():
 
 
 @pytest.mark.asyncio
+async def test_ensure_waha_session_retries_request_timeout(monkeypatch):
+    requests = []
+
+    async def handler(request):
+        requests.append(request)
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json={
+                    "name": "demo",
+                    "status": "WORKING",
+                    "config": {"webhooks": []},
+                },
+            )
+        if request.method == "PUT":
+            if sum(item.method == "PUT" for item in requests) == 1:
+                return httpx.Response(408)
+            return httpx.Response(200, json={"name": "demo"})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    monkeypatch.setattr("courier.adapters.waha.SESSION_SETUP_RETRY_DELAY_SECONDS", 0)
+    transport = WAHATransport(
+        session_name="demo",
+        base_url="http://waha",
+        api_key="secret",
+        webhook_url="http://courier:8000/webhook",
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://waha") as client:
+        transport.session = client
+        await transport._ensure_waha_session()
+
+    assert [request.method for request in requests] == ["GET", "PUT", "GET", "PUT"]
+
+
+@pytest.mark.asyncio
 async def test_ensure_waha_session_creates_and_starts_missing_session():
     requests = []
 
