@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from http import HTTPStatus
 from typing import Any
 
 
@@ -56,39 +57,39 @@ class WebhookServer:
         try:
             method, target, body = await asyncio.wait_for(self._read_request(reader), timeout=self.request_timeout)
         except TimeoutError:
-            await self._write_response(writer, 408, b"Request timeout")
+            await self._write_response(writer, HTTPStatus.REQUEST_TIMEOUT, b"Request timeout")
             return
         except PayloadTooLargeError:
-            await self._write_response(writer, 413, b"Payload too large")
+            await self._write_response(writer, HTTPStatus.REQUEST_ENTITY_TOO_LARGE, b"Payload too large")
             return
         except asyncio.IncompleteReadError, ValueError, UnicodeDecodeError:
-            await self._write_response(writer, 400, b"Bad request")
+            await self._write_response(writer, HTTPStatus.BAD_REQUEST, b"Bad request")
             return
 
         if method == "GET" and target == "/health":
-            await self._write_response(writer, 200, b"OK")
+            await self._write_response(writer, HTTPStatus.OK, b"OK")
             return
         if method != "POST" or target != "/webhook":
-            status = 405 if target == "/webhook" else 404
+            status = HTTPStatus.METHOD_NOT_ALLOWED if target == "/webhook" else HTTPStatus.NOT_FOUND
             await self._write_response(writer, status, b"Not found")
             return
 
         try:
             payload = json.loads(body)
         except json.JSONDecodeError, UnicodeDecodeError:
-            await self._write_response(writer, 400, b"Invalid JSON")
+            await self._write_response(writer, HTTPStatus.BAD_REQUEST, b"Invalid JSON")
             return
         if not isinstance(payload, dict):
-            await self._write_response(writer, 400, b"Expected JSON object")
+            await self._write_response(writer, HTTPStatus.BAD_REQUEST, b"Expected JSON object")
             return
 
         try:
             await self.handler(payload)
         except Exception:
             logger.exception("Webhook event processing failed")
-            await self._write_response(writer, 500, b"Webhook processing failed")
+            await self._write_response(writer, HTTPStatus.INTERNAL_SERVER_ERROR, b"Webhook processing failed")
             return
-        await self._write_response(writer, 200, b"OK")
+        await self._write_response(writer, HTTPStatus.OK, b"OK")
 
     async def _read_request(self, reader: asyncio.StreamReader) -> tuple[str, str, bytes]:
         request_line_bytes, header_size = await self._read_header_line(reader, 0)
@@ -139,18 +140,9 @@ class WebhookServer:
         except ValueError as exc:
             raise ValueError("Invalid Content-Length") from exc
 
-    async def _write_response(self, writer: asyncio.StreamWriter, status: int, body: bytes) -> None:
-        status_text = {
-            200: "OK",
-            400: "Bad Request",
-            404: "Not Found",
-            405: "Method Not Allowed",
-            408: "Request Timeout",
-            413: "Payload Too Large",
-            500: "Internal Server Error",
-        }[status]
+    async def _write_response(self, writer: asyncio.StreamWriter, status: HTTPStatus, body: bytes) -> None:
         writer.write(
-            f"HTTP/1.1 {status} {status_text}\r\n"
+            f"HTTP/1.1 {status.value} {status.phrase}\r\n"
             f"Content-Length: {len(body)}\r\n"
             "Connection: close\r\n"
             "Content-Type: text/plain; charset=utf-8\r\n\r\n".encode()

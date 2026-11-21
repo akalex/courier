@@ -3,8 +3,21 @@ import json
 import httpx
 import pytest
 
+from courier import __version__
 from courier.adapters.matrix import MatrixDestination
 from courier.domain import Attachment
+
+
+@pytest.mark.asyncio
+async def test_client_user_agent_uses_package_version():
+    destination = MatrixDestination(
+        homeserver_url="https://matrix.example.org",
+        access_token="matrix-token",
+    )
+    try:
+        assert destination.client.headers["User-Agent"] == f"courier/{__version__}"
+    finally:
+        await destination.stop()
 
 
 @pytest.mark.asyncio

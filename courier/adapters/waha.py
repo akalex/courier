@@ -5,11 +5,13 @@ import base64
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
+from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
 
 import httpx
 
+from .. import __version__
 from ..config import AppConfig
 from ..domain import Attachment, Message
 from ..webhook_server import WebhookServer
@@ -19,6 +21,8 @@ logger = logging.getLogger(__name__)
 HEALTHY_SESSION_STATUSES = {"WORKING"}
 UNHEALTHY_SESSION_STATUSES = {"FAILED", "STOPPED", "SCAN_QR", "EXPIRED", "TERMINATED", "LOGGED_OUT"}
 SESSION_MONITOR_INTERVAL = 30
+SESSION_SETUP_MAX_ATTEMPTS = 12
+SESSION_SETUP_RETRY_DELAY_SECONDS = 5
 LEGACY_COURIER_WEBHOOK_URL = "http://courier:8000/webhook"
 
 
@@ -115,7 +119,7 @@ class WAHATransport:
             RuntimeError: If the client cannot initialize its HTTP session.
         """
         self._on_message = on_message
-        headers = {"User-Agent": "courier/0.1.0"}
+        headers = {"User-Agent": f"courier/{__version__}"}
         if self.api_key:
             headers["X-Api-Key"] = self.api_key
         self.session = httpx.AsyncClient(
@@ -143,24 +147,27 @@ class WAHATransport:
             raise RuntimeError("WAHA transport is not started")
 
         session_path = f"/api/sessions/{quote(self.session_name, safe='')}"
-        for attempt in range(12):
+        for attempt in range(SESSION_SETUP_MAX_ATTEMPTS):
             try:
                 await self._configure_waha_session(session_path)
                 return
             except httpx.HTTPStatusError as exc:
-                if exc.response.status_code < 500 or attempt == 11:
+                if (
+                    exc.response.status_code < HTTPStatus.INTERNAL_SERVER_ERROR
+                    or attempt + 1 == SESSION_SETUP_MAX_ATTEMPTS
+                ):
                     raise
             except httpx.TransportError:
-                if attempt == 11:
+                if attempt + 1 == SESSION_SETUP_MAX_ATTEMPTS:
                     raise
-            await asyncio.sleep(5)
+            await asyncio.sleep(SESSION_SETUP_RETRY_DELAY_SECONDS)
 
     async def _configure_waha_session(self, session_path: str) -> None:
         if self.session is None:
             raise RuntimeError("WAHA transport is not started")
 
         response = await self.session.get(session_path)
-        if response.status_code == 404:
+        if response.status_code == HTTPStatus.NOT_FOUND:
             response = await self.session.post(
                 "/api/sessions/",
                 json={
@@ -248,12 +255,12 @@ class WAHATransport:
             )
         except httpx.HTTPStatusError as exc:
             status_code = exc.response.status_code
-            if status_code == 404:
+            if status_code == HTTPStatus.NOT_FOUND:
                 await self._report_health(
                     "session:missing",
-                    f"WAHA session {self.session_name} no longer exists (HTTP 404).",
+                    f"WAHA session {self.session_name} no longer exists (HTTP {HTTPStatus.NOT_FOUND.value}).",
                 )
-            elif status_code >= 500:
+            elif status_code >= HTTPStatus.INTERNAL_SERVER_ERROR:
                 await self._report_health(
                     "worker:unavailable",
                     f"WAHA worker returned HTTP {status_code} while checking session {self.session_name}.",
@@ -373,7 +380,7 @@ class WAHATransport:
         error_message = error_payload.get("message", "") if isinstance(error_payload, dict) else ""
         if (
             endpoint == "/api/sendVideo"
-            and response.status_code == 422
+            and response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
             and (
                 isinstance(error_message, str)
                 and 'Use "devlikeapro/waha:chrome" docker image to send video in WEBJS' in error_message

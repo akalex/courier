@@ -2,6 +2,13 @@
 
 Notable changes to Courier are documented here. This changelog follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use Semantic Versioning.
 
+## [0.2.1] - 2026-11-21
+
+### Changed
+
+- Include the installed Courier version in WAHA and Matrix HTTP User-Agent headers.
+- Use named HTTP status and WAHA session retry constants for clearer request handling.
+
 ## [0.2.0] - 2026-11-21
 
 ### Added

@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
+from courier import __version__
 from courier.adapters.waha import WAHATransport
 from courier.domain import Attachment, Message
 from courier.webhook_server import WebhookServer
@@ -373,6 +374,7 @@ async def test_start_sets_api_key_header_and_configures_session(monkeypatch):
     await transport.start(lambda message: None)
 
     assert captured["headers"]["X-Api-Key"] == "secret"
+    assert captured["headers"]["User-Agent"] == f"courier/{__version__}"
     configure_session.assert_awaited_once()
 
 

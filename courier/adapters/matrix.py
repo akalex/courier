@@ -6,6 +6,7 @@ from urllib.parse import quote
 
 import httpx
 
+from .. import __version__
 from ..config import AppConfig
 from ..domain import Attachment
 
@@ -25,7 +26,7 @@ class MatrixDestination:
     ) -> None:
         self.client = client or httpx.AsyncClient(
             base_url=homeserver_url.rstrip("/"),
-            headers={"Authorization": f"Bearer {access_token}", "User-Agent": "courier/0.1.0"},
+            headers={"Authorization": f"Bearer {access_token}", "User-Agent": f"courier/{__version__}"},
             timeout=httpx.Timeout(30.0, connect=10.0, read=20.0),
         )
 
