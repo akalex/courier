@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import OrderedDict
+from pathlib import PurePath
 
-from .domain import Message
+from .domain import Attachment, Message
 from .filters import AllOf
 from .ports import Filter, MessageDestination
 
@@ -24,6 +25,8 @@ class Forwarder:
         filter_policy: Filter | None = None,
         recent_ids: int = 1000,
         max_attachment_size: int = 20 * 1024 * 1024,
+        forward_content: tuple[str, ...] = ("text", "media"),
+        media_types: tuple[str, ...] = ("image", "video", "audio", "file"),
     ) -> None:
         """Initialize a forwarder with source and destination chat identifiers.
 
@@ -34,6 +37,8 @@ class Forwarder:
             filter_policy: Optional message filter used to accept or reject incoming data.
             recent_ids: Number of recent message IDs to retain for deduplication.
             max_attachment_size: Maximum accepted attachment byte size before filtering.
+            forward_content: Message content types to send: text, media, or both.
+            media_types: Media categories eligible for forwarding.
         """
         self.source_chat_id = source_chat_id
         self.target_chat_id = target_chat_id
@@ -45,6 +50,8 @@ class Forwarder:
         self._recent_ids: OrderedDict[str, None] = OrderedDict()
         self._lock = asyncio.Lock()
         self.max_attachment_size = max_attachment_size
+        self.forward_content = frozenset(forward_content)
+        self.media_types = frozenset(media_types)
 
     async def handle_message(self, message: Message) -> None:
         """Validate, filter, deduplicate, and forward a single incoming message.
@@ -68,8 +75,11 @@ class Forwarder:
                 logger.info("Filtered out message id=%s chat_id=%s", message.id, message.chat_id)
                 return
 
-            formatted_text = self._format_text(message)
+            formatted_text = self._format_text(message) if "text" in self.forward_content else ""
             attachments = self._sanitize_attachments(message)
+            if not formatted_text and not attachments:
+                logger.info("Dropping message id=%s with no eligible content", message.id)
+                return
             try:
                 await self.destination.send(self.target_chat_id, formatted_text, attachments)
             except Exception:
@@ -92,8 +102,8 @@ class Forwarder:
         """
         return message.text
 
-    def _sanitize_attachments(self, message: Message):
-        """Remove oversized attachments before sending them downstream.
+    def _sanitize_attachments(self, message: Message) -> tuple[Attachment, ...]:
+        """Select eligible attachments and remove oversized files before sending.
 
         Args:
             message: Message whose attachments should be checked.
@@ -102,7 +112,12 @@ class Forwarder:
             A tuple containing only attachments that fit within the configured size limit.
         """
         sanitized = []
+        if "media" not in self.forward_content:
+            return ()
+
         for attachment in message.attachments:
+            if self._media_type(attachment) not in self.media_types:
+                continue
             if attachment.data and len(attachment.data) > self.max_attachment_size:
                 logger.warning(
                     "Skipping oversized attachment for message id=%s: %s (%d bytes)",
@@ -113,3 +128,14 @@ class Forwarder:
                 continue
             sanitized.append(attachment)
         return tuple(sanitized)
+
+    @staticmethod
+    def _media_type(attachment: Attachment) -> str:
+        mime_type = attachment.mime_type.lower()
+        if mime_type.startswith(("image/", "video/", "audio/")):
+            return mime_type.split("/", 1)[0]
+        video_extensions = {".3gp", ".avi", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".webm", ".wmv"}
+        filename_suffix = PurePath(attachment.filename or "").suffix.lower()
+        if mime_type == "application/octet-stream" and filename_suffix in video_extensions:
+            return "video"
+        return "file"

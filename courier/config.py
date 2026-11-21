@@ -34,7 +34,13 @@ class AppConfig:
     matrix_access_token: str
     include_from_me: bool
     filters: FilterSettings
+    forward_content: tuple[str, ...]
+    media_types: tuple[str, ...]
     max_attachment_size: int = 20 * 1024 * 1024
+
+
+FORWARD_CONTENT_OPTIONS = {"text", "media"}
+MEDIA_TYPE_OPTIONS = {"image", "video", "audio", "file"}
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -82,6 +88,18 @@ def _coerce_list(value: Any, *, name: str) -> list[str]:
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
     raise ValueError(f"Config field '{name}' must be a string or list of strings")
+
+
+def _coerce_options(value: Any, *, name: str, allowed: set[str], default: tuple[str, ...]) -> tuple[str, ...]:
+    if value is None:
+        return default
+    values = tuple(item.lower() for item in _coerce_list(value, name=name))
+    unsupported = sorted(set(values) - allowed)
+    if unsupported:
+        raise ValueError(f"Config field '{name}' has unsupported value(s): {', '.join(unsupported)}")
+    if not values:
+        raise ValueError(f"Config field '{name}' must contain at least one value")
+    return tuple(dict.fromkeys(values))
 
 
 def _coerce_bool(value: Any, *, name: str) -> bool:
@@ -190,6 +208,18 @@ def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
     filters_cfg = raw.get("filters") or {}
     if not isinstance(filters_cfg, dict):
         raise ValueError("Config field 'filters' must be a mapping")
+    forward_content = _coerce_options(
+        raw.get("forward_content"),
+        name="forward_content",
+        allowed=FORWARD_CONTENT_OPTIONS,
+        default=("text", "media"),
+    )
+    media_types = _coerce_options(
+        raw.get("media_types"),
+        name="media_types",
+        allowed=MEDIA_TYPE_OPTIONS,
+        default=("image", "video", "audio", "file"),
+    )
 
     transport = _coerce_string(os.getenv("TRANSPORT", raw.get("transport", "waha")), name="transport").lower()
     source_transport = _coerce_string(
@@ -272,5 +302,7 @@ def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
         matrix_access_token=matrix_access_token,
         include_from_me=include_from_me,
         filters=filters,
+        forward_content=forward_content,
+        media_types=media_types,
         max_attachment_size=max_attachment_size,
     )

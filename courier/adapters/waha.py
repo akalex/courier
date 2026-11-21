@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 HEALTHY_SESSION_STATUSES = {"WORKING"}
 UNHEALTHY_SESSION_STATUSES = {"FAILED", "STOPPED", "SCAN_QR", "EXPIRED", "TERMINATED", "LOGGED_OUT"}
 SESSION_MONITOR_INTERVAL = 30
+LEGACY_COURIER_WEBHOOK_URL = "http://courier:8000/webhook"
 
 
 def _first(mapping: dict[str, Any], *keys: str) -> Any:
@@ -56,7 +57,7 @@ def _with_required_events(config: dict[str, Any], webhook_url: str) -> list[dict
     if not isinstance(webhooks, list) or not all(isinstance(hook, dict) for hook in webhooks):
         raise ValueError("WAHA returned an invalid session webhook config")
 
-    configured_webhooks = [dict(webhook) for webhook in webhooks]
+    configured_webhooks = [dict(webhook) for webhook in webhooks if webhook.get("url") != LEGACY_COURIER_WEBHOOK_URL]
     for webhook in configured_webhooks:
         if webhook.get("url") == webhook_url:
             events = webhook.get("events") or []

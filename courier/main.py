@@ -137,6 +137,8 @@ async def main() -> None:
         filter_policy=build_filter_policy(config),
         recent_ids=1000,
         max_attachment_size=config.max_attachment_size,
+        forward_content=config.forward_content,
+        media_types=config.media_types,
     )
 
     stop_event = asyncio.Event()

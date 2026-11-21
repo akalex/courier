@@ -27,7 +27,41 @@ transport: waha
     assert cfg.waha_session == "default"
     assert cfg.source_transport == "waha"
     assert cfg.destination_transport == "waha"
+    assert cfg.forward_content == ("text", "media")
+    assert cfg.media_types == ("image", "video", "audio", "file")
 
+
+def test_forward_content_and_media_types_can_be_selected(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "source_chat_id: source\ntarget_chat_id: target\n"
+        "forward_content: [media]\nmedia_types: [video]\n",
+        encoding="utf-8",
+    )
+
+    cfg = load_config(path)
+
+    assert cfg.forward_content == ("media",)
+    assert cfg.media_types == ("video",)
+
+
+@pytest.mark.parametrize(
+    ("setting", "value", "error"),
+    [
+        ("forward_content", "[audio]", "forward_content"),
+        ("media_types", "[document]", "media_types"),
+        ("forward_content", "[]", "at least one value"),
+    ],
+)
+def test_invalid_forward_content_settings_fail_validation(tmp_path, setting, value, error):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        f"source_chat_id: source\ntarget_chat_id: target\n{setting}: {value}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=error):
+        load_config(path)
 
 def test_matrix_destination_config_loads_and_requires_credentials(tmp_path, monkeypatch):
     path = tmp_path / "config.yaml"

@@ -1,3 +1,18 @@
+x-courier-common: &courier-common
+  image: ghcr.io/akalex/courier:${COURIER_TAG:-latest}
+  restart: unless-stopped
+  depends_on:
+    - waha
+  environment: &courier-environment
+    TRANSPORT: waha
+    CONFIG_PATH: /app/config.yaml
+    WAHA_URL: http://waha:3000
+    WAHA_API_KEY: ${WAHA_API_KEY:?Set WAHA_API_KEY in .env}
+    WAHA_SESSION: ${WAHA_SESSION:-default}
+    LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    LISTEN_PORT: ${LISTEN_PORT:-8000}
+    INCLUDE_FROM_ME: ${INCLUDE_FROM_ME:-}
+
 services:
   waha:
     image: devlikeapro/waha:arm
@@ -13,22 +28,24 @@ services:
       WHATSAPP_SWAGGER_USERNAME: ${WHATSAPP_SWAGGER_USERNAME:?Set WHATSAPP_SWAGGER_USERNAME in .env}
       WHATSAPP_SWAGGER_PASSWORD: ${WHATSAPP_SWAGGER_PASSWORD:?Set WHATSAPP_SWAGGER_PASSWORD in .env}
 
-  courier:
-    image: ghcr.io/akalex/courier:${COURIER_TAG:-latest}
-    restart: unless-stopped
-    depends_on:
-      - waha
+  courier-aircraft-losses:
+    <<: *courier-common
+    container_name: courier-aircraft-losses
     volumes:
       - ./config.yaml:/app/config.yaml:ro
     environment:
-      TRANSPORT: waha
-      CONFIG_PATH: /app/config.yaml
-      WAHA_URL: http://waha:3000
-      WAHA_API_KEY: ${WAHA_API_KEY:?Set WAHA_API_KEY in .env}
-      WAHA_SESSION: ${WAHA_SESSION:-default}
-      WHATSAPP_HOOK_URL: http://courier:8000/webhook
+      <<: *courier-environment
+      WHATSAPP_HOOK_URL: http://courier-aircraft-losses:8000/webhook
       SOURCE_CHAT_ID: ${SOURCE_CHAT_ID}
       TARGET_CHAT_ID: ${TARGET_CHAT_ID}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      LISTEN_PORT: ${LISTEN_PORT:-8000}
-      INCLUDE_FROM_ME: ${INCLUDE_FROM_ME:-}
+
+  courier-lupynis:
+    <<: *courier-common
+    container_name: courier-lupynis
+    volumes:
+      - ./config-lupynis.yaml:/app/config.yaml:ro
+    environment:
+      <<: *courier-environment
+      WHATSAPP_HOOK_URL: http://courier-lupynis:8000/webhook
+      SOURCE_CHAT_ID: ${LUPYNIS_SOURCE_CHAT_ID}
+      TARGET_CHAT_ID: ${LUPYNIS_TARGET_CHAT_ID}

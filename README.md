@@ -27,6 +27,7 @@ Courier receives WhatsApp messages from WAHA over its HTTP webhook and sends the
 ## Features
 
 - Forward message text and supported media from WhatsApp to WhatsApp or a Matrix room
+- Select whether a route forwards text, media, or both, and optionally restrict media categories
 - Filter by sender ID/name and/or included keywords, with optional excluded keywords
 - Deduplicate up to 1,000 successfully forwarded message IDs in memory
 - Retry failed webhook deliveries through WAHA's configured retry policy
@@ -49,7 +50,7 @@ uv sync --dev
 
 1. Courier loads and validates its settings from YAML and environment variables.
 2. It connects to the configured WhatsApp source (currently WAHA) using the configured API key.
-3. It finds or creates the configured WAHA session, registers its webhook for `message`, `message.any`, and `session.status`, and starts the session if needed.
+3. It finds or creates the configured WAHA session, registers its webhook for `message`, `message.any`, and `session.status`, and starts the session if needed. When upgrading from the old `courier` container, it removes the obsolete `http://courier:8000/webhook` entry from the existing session; no new session or QR scan is needed.
 4. WAHA sends message events to Courier's `POST /webhook` endpoint.
 5. Courier ignores events outside the configured source chat, applies filters, and sends the message to the configured destination.
 
@@ -118,8 +119,9 @@ For either route, add the existing `filters` settings to the same YAML file if y
 
 - Text and captions are forwarded without a sender-name prefix. WhatsApp destinations send as the Courier-linked account; neither WhatsApp nor Matrix preserves the original sender identity or all source-side formatting as native metadata.
 - Courier forwards at most one attachment per message. WhatsApp destinations use WAHA's `sendImage`, `sendVideo`, or `sendFile` endpoint. Matrix destinations upload media to the homeserver, then send an image, video, audio, or file event to the configured room.
+- `forward_content` can limit a route to `text`, `media`, or both (the default). `media_types` can restrict attachments to `image`, `video`, `audio`, and/or `file`. A media-only route drops messages without an eligible attachment and does not forward captions.
 - If WAHA reports that inline WEBJS video sending requires the `devlikeapro/waha:chrome` image, Courier retries the video as a file. This is useful with WAHA's ARM image, where inline WEBJS video is not supported.
-- Media download failures, unsafe media URLs, and empty media do not discard the text/caption. An attachment larger than `max_attachment_size` is skipped; Courier sends the text/caption instead. The size limit defaults to 20 MiB. Media is downloaded before this forwarding-size check, so the setting does not limit download bandwidth or peak download memory.
+- With text forwarding enabled, media download failures, unsafe media URLs, and empty media do not discard the text/caption. An attachment larger than `max_attachment_size` is skipped; Courier sends the text/caption instead. The size limit defaults to 20 MiB. Media is downloaded before this forwarding-size check, so the setting does not limit download bandwidth or peak download memory.
 - Media URLs are fetched only when they resolve to the configured WAHA origin. Loopback media URLs are rewritten to the configured WAHA host. This prevents Courier's WAHA API-key header from being sent to an unrelated host; URLs on another hostname/origin are skipped.
 - Included keywords search the message text/caption using case-insensitive substring matching. A keyword filter accepts a message if any configured keyword matches.
 - Excluded keywords are also case-insensitive substring matches against the text/caption. If any excluded keyword appears, the message is rejected even when it matches an included keyword or sender. Exclusions are vetoes; included keywords and sender criteria retain their OR behavior.
@@ -150,6 +152,8 @@ waha_session: "default"
 webhook_url: "http://localhost:8000/webhook"
 include_from_me: false
 max_attachment_size: 20971520
+forward_content: [text, media]
+media_types: [image, video, audio, file]
 
 matrix:
   homeserver_url: "https://matrix.example.org"
@@ -185,6 +189,8 @@ filters:
 | Matrix access token | `MATRIX_ACCESS_TOKEN` | `matrix.access_token` | Required for a Matrix destination; keep it secret |
 | Include messages sent by the linked account | `INCLUDE_FROM_ME` | `include_from_me` | `false`; accepts true/false, yes/no, on/off, or 1/0 |
 | Maximum outgoing attachment size in bytes | — | `max_attachment_size` | `20971520` (20 MiB); must be positive |
+| Message content to forward | — | `forward_content` | `[text, media]`; accepts one or both values |
+| Eligible attachment categories | — | `media_types` | `[image, video, audio, file]`; applies only when forwarding media |
 | Required/include keyword values | — | `filters.keywords` | Empty; accepts a YAML list or comma-separated string; any one match satisfies the keyword criterion |
 | Excluded keyword values | — | `filters.exclude_keywords` | Empty; accepts a YAML list or comma-separated string; any one match rejects the message |
 | Sender filter values | — | `filters.senders` | Empty; accepts a YAML list or comma-separated string |
@@ -194,7 +200,9 @@ filters:
 
 For a Matrix destination, `TARGET_CHAT_ID` is the Matrix room ID, and the Matrix user represented by `MATRIX_ACCESS_TOKEN` must already be joined to that room. Keep the access token secret.
 
-`max_attachment_size` and filter values are configured in YAML; they have no environment-variable overrides. Unknown transport names and invalid typed settings fail during startup. For WhatsApp-to-WhatsApp routes, `INCLUDE_FROM_ME` requires distinct source and target chat IDs to avoid loops. Filter order/combination is: the message must pass at least one configured include criterion (keyword or sender), if any are configured, and must not match any excluded keyword. When only exclusions are configured, all messages without excluded terms are eligible.
+`max_attachment_size`, content selection, media types, and filter values are configured in YAML; they have no environment-variable overrides. Unknown transport names and invalid typed settings fail during startup. For WhatsApp-to-WhatsApp routes, `INCLUDE_FROM_ME` requires distinct source and target chat IDs to avoid loops. Filter order/combination is: the message must pass at least one configured include criterion (keyword or sender), if any are configured, and must not match any excluded keyword. When only exclusions are configured, all messages without excluded terms are eligible.
+
+The Compose deployment defines two routes: `courier-aircraft-losses` keeps the existing `config.yaml` behavior, while `courier-lupynis` uses `config-lupynis.yaml` to forward only video attachments. Both extend the shared `x-courier-common` settings. To add another route, for example `courier-blink`, add another service that extends the same template, mounts its own config file, and sets its own webhook URL and chat IDs. Give each route unique chat-ID environment variables and a webhook URL using its Compose service name; all routes can share the same WAHA session and internal listen port.
 
 ## Run locally
 
@@ -277,18 +285,20 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
    ```
 
    This generates a new WAHA API key and dashboard/Swagger logins. Use strong, unique values for the API key and passwords. Keep the generated `.env` private; Courier and WAHA use the same API key. Continue with the next step to add Courier's settings to this file.
-4. Add Courier's settings to `.env`. You can temporarily use the values below for the chat IDs; replace them with the real IDs after linking WhatsApp and looking up your chats:
+4. Add Courier's settings to `.env`. Replace the chat IDs with the real IDs after linking WhatsApp and looking up your chats:
 
    ```dotenv
    WAHA_SESSION=default
    SOURCE_CHAT_ID=replace-after-linking
    TARGET_CHAT_ID=replace-after-linking
+   LUPYNIS_SOURCE_CHAT_ID=replace-after-linking
+   LUPYNIS_TARGET_CHAT_ID=replace-after-linking
    LOG_LEVEL=INFO
    LISTEN_PORT=8000
    COURIER_TAG=latest
    ```
 
-5. Create `config.yaml` in the same directory (the Compose file mounts it into Courier). This example forwards messages or media whose text/caption contains `urgent` or `alert`:
+5. Create `config.yaml` and `config-lupynis.yaml` in the same directory. The first is the existing route's filter configuration:
 
    ```yaml
    filters:
@@ -298,10 +308,31 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
    ```
 
    Keywords are case-insensitive substrings; any one matching keyword is sufficient. To disable keyword filtering, use an empty config file (`{}`) instead.
+   The Lupynis route uses this content configuration (add any desired filters to the same file):
+
+   ```yaml
+   forward_content: [media]
+   media_types: [video]
+   ```
 6. Create `docker-compose.yml` in the same directory:
 
    ```bash
    cat > docker-compose.yml <<'EOF'
+   x-courier-common: &courier-common
+     image: ghcr.io/akalex/courier:${COURIER_TAG:-latest}
+     restart: unless-stopped
+     depends_on:
+       - waha
+     environment: &courier-environment
+       TRANSPORT: waha
+       CONFIG_PATH: /app/config.yaml
+       WAHA_URL: http://waha:3000
+       WAHA_API_KEY: ${WAHA_API_KEY:?Set WAHA_API_KEY in .env}
+       WAHA_SESSION: ${WAHA_SESSION:-default}
+       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+       LISTEN_PORT: ${LISTEN_PORT:-8000}
+       INCLUDE_FROM_ME: ${INCLUDE_FROM_ME:-}
+
    services:
      waha:
        image: devlikeapro/waha:arm
@@ -317,26 +348,31 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
          WHATSAPP_SWAGGER_USERNAME: ${WHATSAPP_SWAGGER_USERNAME:?Set WHATSAPP_SWAGGER_USERNAME in .env}
          WHATSAPP_SWAGGER_PASSWORD: ${WHATSAPP_SWAGGER_PASSWORD:?Set WHATSAPP_SWAGGER_PASSWORD in .env}
 
-     courier:
-       image: ghcr.io/akalex/courier:${COURIER_TAG:-latest}
-       restart: unless-stopped
-       depends_on:
-         - waha
+     courier-aircraft-losses:
+       <<: *courier-common
+       container_name: courier-aircraft-losses
        volumes:
          - ./config.yaml:/app/config.yaml:ro
        environment:
-         TRANSPORT: waha
-         CONFIG_PATH: /app/config.yaml
-         WAHA_URL: http://waha:3000
-         WAHA_API_KEY: ${WAHA_API_KEY:?Set WAHA_API_KEY in .env}
-         WAHA_SESSION: ${WAHA_SESSION:-default}
-         WHATSAPP_HOOK_URL: http://courier:8000/webhook
+         <<: *courier-environment
+         WHATSAPP_HOOK_URL: http://courier-aircraft-losses:8000/webhook
          SOURCE_CHAT_ID: ${SOURCE_CHAT_ID}
          TARGET_CHAT_ID: ${TARGET_CHAT_ID}
-         LOG_LEVEL: ${LOG_LEVEL:-INFO}
-         LISTEN_PORT: ${LISTEN_PORT:-8000}
+
+     courier-lupynis:
+       <<: *courier-common
+       container_name: courier-lupynis
+       volumes:
+         - ./config-lupynis.yaml:/app/config.yaml:ro
+       environment:
+         <<: *courier-environment
+         WHATSAPP_HOOK_URL: http://courier-lupynis:8000/webhook
+         SOURCE_CHAT_ID: ${LUPYNIS_SOURCE_CHAT_ID}
+         TARGET_CHAT_ID: ${LUPYNIS_TARGET_CHAT_ID}
    EOF
    ```
+
+   To add `courier-blink`, copy the `courier-lupynis` service block and rename the service and `container_name` to `courier-blink`. Mount `./config-blink.yaml`, set `WHATSAPP_HOOK_URL` to `http://courier-blink:8000/webhook`, and add `BLINK_SOURCE_CHAT_ID` and `BLINK_TARGET_CHAT_ID` to `.env`. The same pattern works for each additional route.
 
 7. Start both services:
 
@@ -345,7 +381,7 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
    docker compose up -d
    ```
 
-   Courier creates the configured WAHA session and registers its `message` webhook automatically.
+   Each route uses the configured WAHA session and registers its own `message` webhook automatically.
 
 8. To access the WAHA dashboard and Swagger without an SSH tunnel, put Nginx on the VM in front of WAHA. Allow inbound TCP ports 80 and 443 in the Oracle Cloud NSG or Security List and in the VM firewall if enabled. Port 80 is needed for Let's Encrypt validation; port 443 serves HTTPS. Do not open port 3000 publicly.
 
@@ -476,11 +512,11 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
 
    Open `https://waha.example.com/dashboard` (or `https://<VM_PUBLIC_IP>/dashboard` when using an IP certificate), sign in with the generated Dashboard credentials, connect using the generated WAHA API key, and scan the QR code. Swagger is at the same base URL followed by `/swagger`; use the generated Swagger username and password as well as the API key when prompted. This makes the WAHA administration interface publicly reachable, so use strong unique credentials and share the URL only with authorized users.
 
-   To find the chat IDs, open WAHA's Swagger UI at `https://waha.example.com/swagger` (or the IP URL), authorize with the generated API key, then call `GET /api/default/chats` (replace `default` with the value of `WAHA_SESSION` if different). Find the source and destination groups by name and copy each `id` exactly as returned; group IDs typically end in `@g.us`. Update `SOURCE_CHAT_ID` and `TARGET_CHAT_ID` in `/opt/courier/.env` with those IDs, then apply them by restarting Courier:
+   To find the chat IDs, open WAHA's Swagger UI at `https://waha.example.com/swagger` (or the IP URL), authorize with the generated API key, then call `GET /api/default/chats` (replace `default` with the value of `WAHA_SESSION` if different). Find each route's source and destination groups by name and copy each `id` exactly as returned; group IDs typically end in `@g.us`. Update the route-specific chat ID variables in `/opt/courier/.env`, then recreate the affected Courier service(s). Include any additional route names you added:
 
    ```bash
    cd /opt/courier
-   docker compose up -d courier
+   docker compose up -d --force-recreate courier-aircraft-losses courier-lupynis
    ```
 
 ## Operate and troubleshoot
@@ -489,16 +525,18 @@ Run these commands from the deployment directory containing `docker-compose.yml`
 
 ```bash
 docker compose ps
-docker compose logs --tail=100 courier
+docker compose logs --tail=100 courier-aircraft-losses courier-lupynis
 docker compose logs --tail=100 waha
-docker compose restart courier
+docker compose restart courier-aircraft-losses courier-lupynis
 ```
 
-When changing `SOURCE_CHAT_ID`, `TARGET_CHAT_ID`, `WAHA_SESSION`, or other `.env` values, recreate the Courier container so it receives the updated environment:
+When changing route chat IDs, `WAHA_SESSION`, or other `.env` values, recreate the affected Courier container so it receives the updated environment:
 
 ```bash
-docker compose up -d --force-recreate courier
+docker compose up -d --force-recreate courier-aircraft-losses courier-lupynis
 ```
+
+Include any additional route service names in these route-specific commands.
 
 Each Courier process/container manages exactly one WAHA session and one source-to-target route. To use another session or route at the same time, run another Courier container with its own environment values and a distinct reachable webhook URL/service name. Give each instance its own routing settings. Each container can listen on port `8000` internally; host-published ports must be unique if publishing them directly.
 
@@ -513,9 +551,9 @@ Each Courier process/container manages exactly one WAHA session and one source-t
 | Media is absent but text arrives | Check WAHA's media URL and network accessibility, whether the resolved URL has the same origin as `WAHA_URL`, the file size limit, and WAHA endpoint support for that media type. |
 | Repeated messages appear after restart or retry | Deduplication is in memory and bounded; it is not durable or exactly-once. WAHA retries may resend an event after an uncertain send result. |
 
-For group IDs, use WAHA Swagger's `GET /api/{session}/chats`, find each group by name, and copy its `id` exactly. Group IDs usually end in `@g.us`. Update `SOURCE_CHAT_ID` and `TARGET_CHAT_ID` and recreate the Courier container.
+For group IDs, use WAHA Swagger's `GET /api/{session}/chats`, find each group by name, and copy its `id` exactly. Group IDs usually end in `@g.us`. Update the relevant route's source and target variables and recreate its Courier container.
 
-To upgrade later, change `COURIER_TAG` in `.env` to `latest`, an exact SemVer tag such as `0.1.0`, or a commit SHA, then run `docker compose pull courier && docker compose up -d courier`. Exact version and commit-SHA tags make rollbacks reproducible. If you do have repository access on the VM, cloning it is also an option; run Compose from the directory containing `docker-compose.yml`.
+To upgrade later, change `COURIER_TAG` in `.env` to `latest`, an exact SemVer tag such as `0.1.0`, or a commit SHA, then run `docker compose pull && docker compose up -d` to update every service in the deployment. Exact version and commit-SHA tags make rollbacks reproducible. If you do have repository access on the VM, cloning it is also an option; run Compose from the directory containing `docker-compose.yml`.
 
 ### Releases and image tags
 
@@ -525,7 +563,7 @@ A SemVer tag publishes `X.Y.Z`, `X.Y`, `X`, `latest`, and the full commit SHA im
 
 Runtime credentials stay on the VM in the ignored `.env` file, not in Git. WAHA's web UI is bound to the VM's loopback interface; use the HTTPS Nginx proxy for browser access and never expose port `3000` publicly.
 
-The WAHA adapter listens for inbound webhook events on `/webhook` using `LISTEN_PORT`. Courier provisions the session webhook to the `courier` service over the private Compose network.
+The WAHA adapter listens for inbound webhook events on `/webhook` using `LISTEN_PORT`. Each route registers its own webhook to its corresponding service over the private Compose network.
 
 ## Development
 

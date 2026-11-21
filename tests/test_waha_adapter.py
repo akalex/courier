@@ -400,12 +400,12 @@ async def test_ensure_waha_session_configures_existing_session():
             assert request.url.path == "/api/sessions/demo"
             config = json.loads(request.content)["config"]
             assert config["webhooks"] == [
+                {"url": "http://other/webhook", "events": ["message"]},
                 {
-                    "url": "http://courier:8000/webhook",
-                    "events": ["session.status", "message", "message.any"],
+                    "url": "http://courier-aircraft-losses:8000/webhook",
+                    "events": ["message", "message.any", "session.status"],
                     "retries": {"policy": "exponential", "delaySeconds": 2, "attempts": 10},
                 },
-                {"url": "http://other/webhook", "events": ["message"]},
             ]
             return httpx.Response(200, json={"name": "demo"})
         raise AssertionError(f"Unexpected request: {request.method} {request.url}")
@@ -414,7 +414,7 @@ async def test_ensure_waha_session_configures_existing_session():
         session_name="demo",
         base_url="http://waha",
         api_key="secret",
-        webhook_url="http://courier:8000/webhook",
+        webhook_url="http://courier-aircraft-losses:8000/webhook",
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://waha") as client:
         transport.session = client
