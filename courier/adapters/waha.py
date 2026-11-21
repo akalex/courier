@@ -6,6 +6,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from http import HTTPStatus
+from pathlib import PurePath
 from typing import Any
 from urllib.parse import quote
 
@@ -355,8 +356,12 @@ class WAHATransport:
             self._raise_for_status(response)
             return
 
+        mime_type = attachment.mime_type
+        if mime_type == "application/octet-stream" and PurePath(attachment.filename or "").suffix.lower() == ".mp4":
+            mime_type = "video/mp4"
+
         file_payload = {
-            "mimetype": attachment.mime_type,
+            "mimetype": mime_type,
             "filename": attachment.filename or "attachment",
             "data": base64.b64encode(attachment.data).decode("ascii"),
         }
@@ -366,9 +371,9 @@ class WAHATransport:
             "caption": text,
             "file": file_payload,
         }
-        if attachment.mime_type.startswith("image/"):
+        if mime_type.startswith("image/"):
             endpoint = "/api/sendImage"
-        elif attachment.mime_type.startswith("video/"):
+        elif mime_type.startswith("video/"):
             endpoint = "/api/sendVideo"
         else:
             endpoint = "/api/sendFile"

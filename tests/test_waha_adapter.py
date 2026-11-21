@@ -156,6 +156,32 @@ async def test_send_uses_media_specific_waha_endpoint(mime_type, expected_endpoi
 
 
 @pytest.mark.asyncio
+async def test_send_infers_mp4_mime_type_for_inline_video():
+    transport = WAHATransport(
+        session_name="demo",
+        base_url="http://waha",
+        api_key="secret",
+        webhook_url="http://bot/webhook",
+    )
+    transport.session = AsyncMock()
+    transport.session.post.return_value = httpx.Response(
+        200,
+        request=httpx.Request("POST", "http://waha/api/sendVideo"),
+    )
+
+    await transport.send(
+        "target@g.us",
+        "caption",
+        attachments=(Attachment("application/octet-stream", "clip.mp4", b"video-data"),),
+    )
+
+    args, kwargs = transport.session.post.call_args
+    assert args[0] == "/api/sendVideo"
+    assert kwargs["json"]["file"]["mimetype"] == "video/mp4"
+    assert kwargs["json"]["file"]["data"] == "dmlkZW8tZGF0YQ=="
+
+
+@pytest.mark.asyncio
 async def test_send_video_falls_back_to_file_when_waha_lacks_chrome(caplog):
     transport = WAHATransport(
         session_name="demo",

@@ -4,6 +4,12 @@ Notable changes to Courier are documented here. This changelog follows [Keep a C
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-21
+
+### Fixed
+
+- Send `.mp4` attachments with a generic MIME type through WAHA's inline video endpoint.
+
 ## [0.4.0] - 2026-11-21
 
 ### Changed
