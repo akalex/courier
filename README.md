@@ -54,7 +54,9 @@ uv sync --dev
 4. WAHA sends message events to Courier's `POST /webhook` endpoint.
 5. Courier ignores events outside the configured source chat, applies filters, and sends the message to the configured destination.
 
-Courier also sends health notifications when the WAHA session stops, fails, or needs QR authentication, or when the WAHA API becomes unavailable. It checks worker/session health every 30 seconds and sends a recovery notification after service resumes. Set `ALERT_CHAT_ID` (or `alert_chat_id`) to choose a fixed recipient; when set, health alerts go only to that recipient, not to either route's `TARGET_CHAT_ID`. The Compose deployment passes the same `ALERT_CHAT_ID` to both routes. If unset, each route defaults to its own `TARGET_CHAT_ID`, so alerts can go to different groups. For a WAHA destination, use the recipient's WAHA chat ID, such as `15551234567@c.us`.
+Courier also sends health notifications when the WAHA session stops, fails, or needs QR authentication, or when the WAHA API becomes unavailable. It checks worker/session health every 30 seconds and sends a recovery notification after service resumes. Set `ALERT_CHAT_ID` (or `alert_chat_id`) to choose a fixed recipient; when set, health alerts go only to that recipient, not to a route's `TARGET_CHAT_ID`. The Compose deployment passes the same `ALERT_CHAT_ID` to all Courier containers. If unset, each container defaults to its own `TARGET_CHAT_ID`. For a WAHA destination, use the recipient's WAHA chat ID, such as `15551234567@c.us`.
+
+In the default multi-route Compose deployment, `courier-health` is the dedicated health-monitor container and is the only Courier service that sends health notifications. The forwarding routes disable `HEALTH_ALERTS_ENABLED`. Standalone Courier instances default to sending health alerts.
 
 Courier also exposes `GET /health` on the same listen port. The webhook server binds to all container interfaces; in a Compose deployment, WAHA should reach it through the private service network. Do not expose the webhook port to the public internet unless it is protected by an appropriate network or authentication layer.
 

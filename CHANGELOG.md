@@ -4,6 +4,16 @@ Notable changes to Courier are documented here. This changelog follows [Keep a C
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-21
+
+### Fixed
+
+- Add a dedicated `courier-health` container and prevent forwarding routes from emitting duplicate health and recovery notifications.
+
+### Added
+
+- Add a health-monitor-only mode for running the dedicated `courier-health` container without forwarding messages.
+
 ## [0.2.2] - 2026-11-21
 
 ### Fixed

@@ -24,6 +24,8 @@ class AppConfig:
     source_chat_id: str
     target_chat_id: str
     alert_chat_id: str
+    health_alerts_enabled: bool
+    health_monitor_only: bool
     listen_port: int
     log_level: str
     waha_url: str
@@ -269,6 +271,14 @@ def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
     if include_from_me_value is None or not include_from_me_value.strip():
         include_from_me_value = raw.get("include_from_me", False)
     include_from_me = _coerce_bool(include_from_me_value, name="include_from_me")
+    health_alerts_enabled = _coerce_bool(
+        os.getenv("HEALTH_ALERTS_ENABLED", raw.get("health_alerts_enabled", True)),
+        name="health_alerts_enabled",
+    )
+    health_monitor_only = _coerce_bool(
+        os.getenv("HEALTH_MONITOR_ONLY", raw.get("health_monitor_only", False)),
+        name="health_monitor_only",
+    )
     filters = FilterSettings(
         keywords=tuple(_coerce_list(filters_cfg.get("keywords"), name="filters.keywords")),
         exclude_keywords=tuple(_coerce_list(filters_cfg.get("exclude_keywords"), name="filters.exclude_keywords")),
@@ -292,6 +302,8 @@ def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
         source_chat_id=source_chat_id,
         target_chat_id=target_chat_id,
         alert_chat_id=alert_chat_id,
+        health_alerts_enabled=health_alerts_enabled,
+        health_monitor_only=health_monitor_only,
         listen_port=listen_port,
         log_level=log_level,
         waha_url=waha_url,

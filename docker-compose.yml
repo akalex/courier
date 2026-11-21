@@ -13,6 +13,8 @@ x-courier-common: &courier-common
     LOG_LEVEL: ${LOG_LEVEL:-INFO}
     LISTEN_PORT: ${LISTEN_PORT:-8000}
     INCLUDE_FROM_ME: ${INCLUDE_FROM_ME:-}
+    HEALTH_ALERTS_ENABLED: false
+    HEALTH_MONITOR_ONLY: false
 
 services:
   waha:
@@ -39,6 +41,7 @@ services:
       WHATSAPP_HOOK_URL: http://courier-aircraft-losses:8000/webhook
       SOURCE_CHAT_ID: ${SOURCE_CHAT_ID}
       TARGET_CHAT_ID: ${TARGET_CHAT_ID}
+      HEALTH_ALERTS_ENABLED: false
 
   courier-lupynis:
     <<: *courier-common
@@ -50,3 +53,17 @@ services:
       WHATSAPP_HOOK_URL: http://courier-lupynis:8000/webhook
       SOURCE_CHAT_ID: ${LUPYNIS_SOURCE_CHAT_ID}
       TARGET_CHAT_ID: ${LUPYNIS_TARGET_CHAT_ID}
+      HEALTH_ALERTS_ENABLED: false
+
+  courier-health:
+    <<: *courier-common
+    container_name: courier-health
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    environment:
+      <<: *courier-environment
+      WHATSAPP_HOOK_URL: http://courier-health:8000/webhook
+      SOURCE_CHAT_ID: ${SOURCE_CHAT_ID}
+      TARGET_CHAT_ID: ${TARGET_CHAT_ID}
+      HEALTH_ALERTS_ENABLED: true
+      HEALTH_MONITOR_ONLY: true

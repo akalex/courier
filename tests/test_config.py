@@ -129,6 +129,26 @@ def test_alert_chat_id_can_be_configured_separately(tmp_path, monkeypatch):
     assert load_config(path).alert_chat_id == "15551234567@c.us"
 
 
+def test_health_alerts_can_be_disabled(tmp_path, monkeypatch):
+    path = tmp_path / "config.yaml"
+    path.write_text("source_chat_id: source\ntarget_chat_id: target\n", encoding="utf-8")
+
+    assert load_config(path).health_alerts_enabled is True
+
+    monkeypatch.setenv("HEALTH_ALERTS_ENABLED", "false")
+    assert load_config(path).health_alerts_enabled is False
+
+
+def test_health_monitor_only_can_be_enabled(tmp_path, monkeypatch):
+    path = tmp_path / "config.yaml"
+    path.write_text("source_chat_id: source\ntarget_chat_id: target\n", encoding="utf-8")
+
+    assert load_config(path).health_monitor_only is False
+
+    monkeypatch.setenv("HEALTH_MONITOR_ONLY", "true")
+    assert load_config(path).health_monitor_only is True
+
+
 def test_transport_setting_remains_a_legacy_default_for_source_and_destination(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text(

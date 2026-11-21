@@ -7,6 +7,7 @@ from collections.abc import Callable
 
 from .adapters import WAHATransport, build_matrix_destination, build_waha_transport
 from .config import AppConfig, load_config
+from .domain import Message
 from .filters import AllOf, AnyOf, ExcludeKeywordFilter, KeywordFilter, SenderFilter
 from .forwarder import Forwarder
 from .ports import Filter, MessageDestination, MessageSource
@@ -70,6 +71,15 @@ def build_filter_policy(config: AppConfig) -> Filter | None:
     allow_policy = FILTER_COMBINER(*allow_filters) if allow_filters else AllOf()
     exclude_policy = ExcludeKeywordFilter(config.filters.exclude_keywords)
     return AllOf(allow_policy, exclude_policy)
+
+
+async def _ignore_message(message: Message) -> None:
+    logger.debug("Health monitor ignored message id=%s", message.id)
+
+
+async def _start_source(source: MessageSource, forwarder: Forwarder, *, health_monitor_only: bool) -> None:
+    message_handler = _ignore_message if health_monitor_only else forwarder.handle_message
+    await source.start(message_handler)
 
 
 async def _shutdown(
@@ -143,7 +153,7 @@ async def main() -> None:
 
     stop_event = asyncio.Event()
 
-    if isinstance(source, WAHATransport):
+    if isinstance(source, WAHATransport) and config.health_alerts_enabled:
         source.set_alert_handler(lambda text: destination.send(config.alert_chat_id, text))
 
     async def _handle_signal() -> None:
@@ -157,7 +167,7 @@ async def main() -> None:
             pass
 
     try:
-        await source.start(forwarder.handle_message)
+        await _start_source(source, forwarder, health_monitor_only=config.health_monitor_only)
     except Exception:
         if destination is not source:
             try:
