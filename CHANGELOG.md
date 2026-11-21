@@ -2,6 +2,14 @@
 
 Notable changes to Courier are documented here. This changelog follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use Semantic Versioning.
 
+## [Unreleased]
+
+## [0.2.2] - 2026-11-21
+
+### Fixed
+
+- Pass `ALERT_CHAT_ID` through Compose so health notifications from every route use the configured recipient.
+
 ## [0.2.1] - 2026-11-21
 
 ### Changed

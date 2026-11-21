@@ -9,6 +9,7 @@ x-courier-common: &courier-common
     WAHA_URL: http://waha:3000
     WAHA_API_KEY: ${WAHA_API_KEY:?Set WAHA_API_KEY in .env}
     WAHA_SESSION: ${WAHA_SESSION:-default}
+    ALERT_CHAT_ID: ${ALERT_CHAT_ID:-}
     LOG_LEVEL: ${LOG_LEVEL:-INFO}
     LISTEN_PORT: ${LISTEN_PORT:-8000}
     INCLUDE_FROM_ME: ${INCLUDE_FROM_ME:-}
