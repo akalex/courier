@@ -18,7 +18,7 @@ x-courier-common: &courier-common
 
 services:
   waha:
-    image: devlikeapro/waha:arm
+    image: ${WAHA_IMAGE:-devlikeapro/waha:arm}
     restart: unless-stopped
     ports:
       - "127.0.0.1:3000:3000"
@@ -30,6 +30,7 @@ services:
       WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:?Set WAHA_DASHBOARD_PASSWORD in .env}
       WHATSAPP_SWAGGER_USERNAME: ${WHATSAPP_SWAGGER_USERNAME:?Set WHATSAPP_SWAGGER_USERNAME in .env}
       WHATSAPP_SWAGGER_PASSWORD: ${WHATSAPP_SWAGGER_PASSWORD:?Set WHATSAPP_SWAGGER_PASSWORD in .env}
+      WHATSAPP_DEFAULT_ENGINE: ${WHATSAPP_DEFAULT_ENGINE:-WEBJS}
 
   courier-aircraft-losses:
     <<: *courier-common

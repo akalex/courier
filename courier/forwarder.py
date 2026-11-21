@@ -7,6 +7,7 @@ from pathlib import PurePath
 
 from .domain import Attachment, Message
 from .filters import AllOf
+from .media import is_mp4_attachment
 from .ports import Filter, MessageDestination
 
 
@@ -136,6 +137,8 @@ class Forwarder:
             return mime_type.split("/", 1)[0]
         video_extensions = {".3gp", ".avi", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".webm", ".wmv"}
         filename_suffix = PurePath(attachment.filename or "").suffix.lower()
-        if mime_type == "application/octet-stream" and filename_suffix in video_extensions:
+        if filename_suffix in video_extensions and mime_type == "application/octet-stream":
+            return "video"
+        if is_mp4_attachment(attachment):
             return "video"
         return "file"

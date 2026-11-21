@@ -6,7 +6,6 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from http import HTTPStatus
-from pathlib import PurePath
 from typing import Any
 from urllib.parse import quote
 
@@ -15,6 +14,7 @@ import httpx
 from .. import __version__
 from ..config import AppConfig
 from ..domain import Attachment, Message
+from ..media import is_mp4_attachment
 from ..webhook_server import WebhookServer
 
 
@@ -357,7 +357,7 @@ class WAHATransport:
             return
 
         mime_type = attachment.mime_type
-        if mime_type == "application/octet-stream" and PurePath(attachment.filename or "").suffix.lower() == ".mp4":
+        if is_mp4_attachment(attachment):
             mime_type = "video/mp4"
 
         file_payload = {

@@ -122,7 +122,7 @@ For either route, add the existing `filters` settings to the same YAML file if y
 - Text and captions are forwarded without a sender-name prefix. WhatsApp destinations send as the Courier-linked account; neither WhatsApp nor Matrix preserves the original sender identity or all source-side formatting as native metadata.
 - Courier forwards at most one attachment per message. WhatsApp destinations use WAHA's `sendImage`, `sendVideo`, or `sendFile` endpoint. Matrix destinations upload media to the homeserver, then send an image, video, audio, or file event to the configured room.
 - `forward_content` can limit a route to `text`, `media`, or both (the default). `media_types` can restrict attachments to `image`, `video`, `audio`, and/or `file`. A media-only route drops messages without an eligible attachment and does not forward captions.
-- If WAHA reports that inline WEBJS video sending requires the `devlikeapro/waha:chrome` image, Courier retries the video as a file. This is useful with WAHA's ARM image, where inline WEBJS video is not supported.
+- If WAHA reports that inline WEBJS video sending requires the `devlikeapro/waha:chrome` image, Courier retries the video as a file attachment. This fallback may not be downloadable as a video in every WhatsApp client. WAHA's `chrome` image is amd64-only; the ARM image used on ARM64 hosts does not support inline WEBJS video. For reliable inline video delivery, run WAHA on an amd64 host with the `chrome` image.
 - With text forwarding enabled, media download failures, unsafe media URLs, and empty media do not discard the text/caption. An attachment larger than `max_attachment_size` is skipped; Courier sends the text/caption instead. The size limit defaults to 20 MiB. Media is downloaded before this forwarding-size check, so the setting does not limit download bandwidth or peak download memory.
 - Media URLs are fetched only when they resolve to the configured WAHA origin. Loopback media URLs are rewritten to the configured WAHA host. This prevents Courier's WAHA API-key header from being sent to an unrelated host; URLs on another hostname/origin are skipped.
 - Included keywords search the message text/caption using case-insensitive substring matching. A keyword filter accepts a message if any configured keyword matches.
@@ -261,7 +261,7 @@ GitHub Actions runs CI on pushes and pull requests. After CI passes on `main`, i
 
 Image publishing does not deploy automatically. You do not need to clone this private repository on the VM: deploy the published image using a Compose file created there.
 
-The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image includes an ARM64 build and Docker selects it automatically. WAHA's `latest` image is x86-only, so use WAHA's ARM image tag, `devlikeapro/waha:arm`, on A1 instances.
+The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image includes an ARM64 build and Docker selects it automatically. The Compose file defaults to WAHA's ARM image tag, `devlikeapro/waha:arm`. If inline WEBJS video is unavailable, WAHA also provides the ARM64 `devlikeapro/waha:noweb-arm` image; test the NOWEB engine by setting `WAHA_IMAGE=devlikeapro/waha:noweb-arm` and `WHATSAPP_DEFAULT_ENGINE=NOWEB` in `.env`. Use a separate WAHA session name when testing another engine so the existing session remains available for rollback, and pair the new session from the Dashboard. WAHA's `devlikeapro/waha:chrome` image supports inline WEBJS video but is amd64-only; it will not run natively on ARM64.
 
 1. Install Docker with the Compose plugin on the Oracle VM.
 2. If the GHCR package is private, create a GitHub token with `read:packages` and authenticate Docker on the VM. If the package is public, skip this step:
@@ -337,7 +337,7 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
 
    services:
      waha:
-       image: devlikeapro/waha:arm
+       image: ${WAHA_IMAGE:-devlikeapro/waha:arm}
        restart: unless-stopped
        ports:
          - "127.0.0.1:3000:3000"
@@ -349,6 +349,7 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
          WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:?Set WAHA_DASHBOARD_PASSWORD in .env}
          WHATSAPP_SWAGGER_USERNAME: ${WHATSAPP_SWAGGER_USERNAME:?Set WHATSAPP_SWAGGER_USERNAME in .env}
          WHATSAPP_SWAGGER_PASSWORD: ${WHATSAPP_SWAGGER_PASSWORD:?Set WHATSAPP_SWAGGER_PASSWORD in .env}
+         WHATSAPP_DEFAULT_ENGINE: ${WHATSAPP_DEFAULT_ENGINE:-WEBJS}
 
      courier-aircraft-losses:
        <<: *courier-common

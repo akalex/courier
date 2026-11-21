@@ -2,6 +2,18 @@
 
 Notable changes to Courier are documented here. This changelog follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use Semantic Versioning.
 
+## [0.4.2] - 2026-11-21
+
+### Fixed
+
+- Detect MP4 attachments by content when WAHA reports a generic MIME type and filename.
+- Clarify that WAHA's ARM image may not deliver MP4s through Courier's document fallback.
+
+### Changed
+
+- Allow the WAHA container image to be overridden with `WAHA_IMAGE` in Docker Compose.
+- Allow the WAHA default engine to be selected with `WHATSAPP_DEFAULT_ENGINE` in Docker Compose.
+
 ## [0.4.1] - 2026-11-21
 
 ### Fixed

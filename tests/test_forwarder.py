@@ -191,6 +191,31 @@ async def test_forwarder_can_send_only_video_attachments_and_drops_other_message
 
 
 @pytest.mark.asyncio
+async def test_forwarder_recognizes_mp4_content_with_generic_mime_and_filename():
+    transport = FakeTransport()
+    forwarder = Forwarder(
+        source_chat_id="source",
+        target_chat_id="target",
+        destination=transport,
+        forward_content=("media",),
+        media_types=("video",),
+    )
+    mp4_data = b"\x00\x00\x00\x18ftypisom"
+    mp4_message = Message(
+        id="video-generic",
+        chat_id="source",
+        sender_id="123",
+        sender_name="Alice",
+        attachments=(Attachment("application/octet-stream", "attachment", mp4_data),),
+    )
+
+    await forwarder.handle_message(mp4_message)
+
+    assert len(transport.sent) == 1
+    assert transport.sent[0]["attachments"][0].data == mp4_data
+
+
+@pytest.mark.asyncio
 async def test_forwarder_can_select_text_without_attachments():
     transport = FakeTransport()
     forwarder = Forwarder(
