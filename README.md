@@ -204,7 +204,7 @@ For a Matrix destination, `TARGET_CHAT_ID` is the Matrix room ID, and the Matrix
 
 `max_attachment_size`, content selection, media types, and filter values are configured in YAML; they have no environment-variable overrides. Unknown transport names and invalid typed settings fail during startup. For WhatsApp-to-WhatsApp routes, `INCLUDE_FROM_ME` requires distinct source and target chat IDs to avoid loops. Filter order/combination is: the message must pass at least one configured include criterion (keyword or sender), if any are configured, and must not match any excluded keyword. When only exclusions are configured, all messages without excluded terms are eligible.
 
-The Compose deployment defines two routes: `courier-aircraft-losses` keeps the existing `config.yaml` behavior, while `courier-lupynis` uses `config-lupynis.yaml` to forward only video attachments. Both extend the shared `x-courier-common` settings, including `ALERT_CHAT_ID`. To send health alerts to one predictable recipient, set `ALERT_CHAT_ID` in `.env` to that WAHA chat ID, then recreate the Courier containers with `docker compose up -d --force-recreate courier-aircraft-losses courier-lupynis`. To add another route, for example `courier-blink`, add another service that extends the same template, mounts its own config file, and sets its own webhook URL and chat IDs. Give each route unique chat-ID environment variables and a webhook URL using its Compose service name; all routes can share the same WAHA session and internal listen port.
+The Compose deployment defines two routes: `courier-aircraft-losses` keeps the existing `config.yaml` behavior, while `courier-tfl` uses `config-tfl.yaml` to forward only video attachments. Both extend the shared `x-courier-common` settings, including `ALERT_CHAT_ID`. To send health alerts to one predictable recipient, set `ALERT_CHAT_ID` in `.env` to that WAHA chat ID, then recreate the Courier containers with `docker compose up -d --force-recreate courier-aircraft-losses courier-tfl`. To add another route, for example `courier-blink`, add another service that extends the same template, mounts its own config file, and sets its own webhook URL and chat IDs. Give each route unique chat-ID environment variables and a webhook URL using its Compose service name; all routes can share the same WAHA session and internal listen port.
 
 ## Run locally
 
@@ -293,14 +293,14 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
    WAHA_SESSION=default
    SOURCE_CHAT_ID=replace-after-linking
    TARGET_CHAT_ID=replace-after-linking
-   LUPYNIS_SOURCE_CHAT_ID=replace-after-linking
-   LUPYNIS_TARGET_CHAT_ID=replace-after-linking
+   TFL_SOURCE_CHAT_ID=replace-after-linking
+   TFL_TARGET_CHAT_ID=replace-after-linking
    LOG_LEVEL=INFO
    LISTEN_PORT=8000
    COURIER_TAG=latest
    ```
 
-5. Create `config.yaml` and `config-lupynis.yaml` in the same directory. The first is the existing route's filter configuration:
+5. Create `config.yaml` and `config-tfl.yaml` in the same directory. The first is the existing route's filter configuration:
 
    ```yaml
    filters:
@@ -310,7 +310,7 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
    ```
 
    Keywords are case-insensitive substrings; any one matching keyword is sufficient. To disable keyword filtering, use an empty config file (`{}`) instead.
-   The Lupynis route uses this content configuration (add any desired filters to the same file):
+   The TFL route uses this content configuration (add any desired filters to the same file):
 
    ```yaml
    forward_content: [media]
@@ -361,20 +361,20 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
          SOURCE_CHAT_ID: ${SOURCE_CHAT_ID}
          TARGET_CHAT_ID: ${TARGET_CHAT_ID}
 
-     courier-lupynis:
+     courier-tfl:
        <<: *courier-common
-       container_name: courier-lupynis
+       container_name: courier-tfl
        volumes:
-         - ./config-lupynis.yaml:/app/config.yaml:ro
+         - ./config-tfl.yaml:/app/config.yaml:ro
        environment:
          <<: *courier-environment
-         WHATSAPP_HOOK_URL: http://courier-lupynis:8000/webhook
-         SOURCE_CHAT_ID: ${LUPYNIS_SOURCE_CHAT_ID}
-         TARGET_CHAT_ID: ${LUPYNIS_TARGET_CHAT_ID}
+         WHATSAPP_HOOK_URL: http://courier-tfl:8000/webhook
+         SOURCE_CHAT_ID: ${TFL_SOURCE_CHAT_ID}
+         TARGET_CHAT_ID: ${TFL_TARGET_CHAT_ID}
    EOF
    ```
 
-   To add `courier-blink`, copy the `courier-lupynis` service block and rename the service and `container_name` to `courier-blink`. Mount `./config-blink.yaml`, set `WHATSAPP_HOOK_URL` to `http://courier-blink:8000/webhook`, and add `BLINK_SOURCE_CHAT_ID` and `BLINK_TARGET_CHAT_ID` to `.env`. The same pattern works for each additional route.
+   To add `courier-blink`, copy the `courier-tfl` service block and rename the service and `container_name` to `courier-blink`. Mount `./config-blink.yaml`, set `WHATSAPP_HOOK_URL` to `http://courier-blink:8000/webhook`, and add `BLINK_SOURCE_CHAT_ID` and `BLINK_TARGET_CHAT_ID` to `.env`. The same pattern works for each additional route.
 
 7. Start both services:
 
@@ -518,7 +518,7 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
 
    ```bash
    cd /opt/courier
-   docker compose up -d --force-recreate courier-aircraft-losses courier-lupynis
+   docker compose up -d --force-recreate courier-aircraft-losses courier-tfl
    ```
 
 ## Operate and troubleshoot
@@ -527,15 +527,15 @@ Run these commands from the deployment directory containing `docker-compose.yml`
 
 ```bash
 docker compose ps
-docker compose logs --tail=100 courier-aircraft-losses courier-lupynis
+docker compose logs --tail=100 courier-aircraft-losses courier-tfl
 docker compose logs --tail=100 waha
-docker compose restart courier-aircraft-losses courier-lupynis
+docker compose restart courier-aircraft-losses courier-tfl
 ```
 
 When changing route chat IDs, `WAHA_SESSION`, or other `.env` values, recreate the affected Courier container so it receives the updated environment:
 
 ```bash
-docker compose up -d --force-recreate courier-aircraft-losses courier-lupynis
+docker compose up -d --force-recreate courier-aircraft-losses courier-tfl
 ```
 
 Include any additional route service names in these route-specific commands.

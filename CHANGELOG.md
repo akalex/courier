@@ -4,6 +4,12 @@ Notable changes to Courier are documented here. This changelog follows [Keep a C
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-21
+
+### Changed
+
+- Rename the Lupynis Compose route and configuration variables to TFL.
+
 ## [0.3.0] - 2026-11-21
 
 ### Fixed

@@ -43,16 +43,16 @@ services:
       TARGET_CHAT_ID: ${TARGET_CHAT_ID}
       HEALTH_ALERTS_ENABLED: false
 
-  courier-lupynis:
+  courier-tfl:
     <<: *courier-common
-    container_name: courier-lupynis
+    container_name: courier-tfl
     volumes:
-      - ./config-lupynis.yaml:/app/config.yaml:ro
+      - ./config-tfl.yaml:/app/config.yaml:ro
     environment:
       <<: *courier-environment
-      WHATSAPP_HOOK_URL: http://courier-lupynis:8000/webhook
-      SOURCE_CHAT_ID: ${LUPYNIS_SOURCE_CHAT_ID}
-      TARGET_CHAT_ID: ${LUPYNIS_TARGET_CHAT_ID}
+      WHATSAPP_HOOK_URL: http://courier-tfl:8000/webhook
+      SOURCE_CHAT_ID: ${TFL_SOURCE_CHAT_ID}
+      TARGET_CHAT_ID: ${TFL_TARGET_CHAT_ID}
       HEALTH_ALERTS_ENABLED: false
 
   courier-health:
