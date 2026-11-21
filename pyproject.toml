@@ -1,6 +1,6 @@
 [project]
 name = "courier"
-version = "0.4.1"
+version = "0.4.2"
 description = "Async message forwarder with pluggable source and destination adapters."
 license = { text = "MIT" }
 authors = [
