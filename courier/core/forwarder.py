@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections import OrderedDict
 
-from .domain import Attachment, MediaRef, Message
+from .domain import Attachment, MediaRef, Message, TransientMediaError
 from .filters import AllOf
 from .media import candidate_media_kinds, media_kind
 from .ports import Filter, MessageDestination
@@ -49,7 +49,8 @@ class Forwarder:
 
     Checks that need only text and sender run before any media is fetched. A message id is
     claimed just before the first fetch or send, released if sending fails so the source can
-    redeliver it, and remembered once handled.
+    redeliver it, and remembered once handled. A message whose only content is media that is
+    temporarily unavailable is released the same way; with text to send, the text goes alone.
     """
 
     def __init__(
@@ -94,6 +95,7 @@ class Forwarder:
             message: The incoming normalized message to process.
 
         Raises:
+            TransientMediaError: If the message has nothing to send until its media can be downloaded.
             Exception: If sending the message fails; the webhook layer uses this to request redelivery.
         """
         if message.chat_id != self.source_chat_id:
@@ -129,8 +131,11 @@ class Forwarder:
         )
 
     async def _deliver(self, message: Message, text: str, candidates: tuple[MediaRef, ...]) -> None:
-        attachments = await self._fetch_eligible(message, candidates)
+        attachments, temporary_failure = await self._fetch_eligible(message, candidates)
         if not text and not attachments:
+            if temporary_failure is not None:
+                logger.warning("Media for message id=%s is temporarily unavailable; requesting redelivery", message.id)
+                raise temporary_failure
             logger.info("Dropping message id=%s with no eligible media after download", message.id)
             return
         try:
@@ -140,10 +145,20 @@ class Forwarder:
             raise
         logger.info("Forwarded message id=%s from chat_id=%s", message.id, message.chat_id)
 
-    async def _fetch_eligible(self, message: Message, candidates: tuple[MediaRef, ...]) -> tuple[Attachment, ...]:
+    async def _fetch_eligible(
+        self,
+        message: Message,
+        candidates: tuple[MediaRef, ...],
+    ) -> tuple[tuple[Attachment, ...], TransientMediaError | None]:
+        """Download candidate media and keep what is eligible, plus the last temporary download failure."""
         attachments = []
+        temporary_failure = None
         for media in candidates:
-            data = await media.fetch(max_bytes=self.max_attachment_size)
+            try:
+                data = await media.fetch(max_bytes=self.max_attachment_size)
+            except TransientMediaError as exc:
+                temporary_failure = exc
+                continue
             if data is None:
                 logger.warning(
                     "Skipping unavailable or oversized attachment for message id=%s: %s",
@@ -154,4 +169,4 @@ class Forwarder:
             attachment = Attachment(media.mime_type, media.filename, data)
             if media_kind(attachment) in self.media_types:
                 attachments.append(attachment)
-        return tuple(attachments)
+        return tuple(attachments), temporary_failure

@@ -1,6 +1,6 @@
 """Courier transport-independent domain, forwarding, and health logic."""
 
-from .domain import Attachment, MediaRef, Message
+from .domain import Attachment, MediaRef, Message, TransientMediaError
 from .filters import AllOf, AnyOf, ExcludeKeywordFilter, KeywordFilter, SenderFilter
 from .forwarder import Forwarder
 from .health import HealthObservation, HealthProbe, SessionHealthMonitor
@@ -23,6 +23,7 @@ __all__ = [
     "MessageDestination",
     "SenderFilter",
     "SessionHealthMonitor",
+    "TransientMediaError",
     "candidate_media_kinds",
     "is_mp4_attachment",
     "media_kind",

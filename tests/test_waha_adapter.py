@@ -7,7 +7,7 @@ import pytest
 from courier import __version__
 from courier.adapters.waha import WAHA, build_waha
 from courier.config import load_config
-from courier.core.domain import Attachment
+from courier.core.domain import Attachment, TransientMediaError
 from courier.core.health import HealthObservation
 
 
@@ -227,12 +227,32 @@ async def test_media_from_outside_waha_origin_is_never_requested(url):
     assert requested == []
 
 
-@pytest.mark.parametrize("response", [httpx.Response(404), httpx.Response(200, content=b"")])
-async def test_failed_or_empty_media_download_is_unavailable(response):
+@pytest.mark.parametrize(
+    "response",
+    [httpx.Response(404), httpx.Response(401), httpx.Response(200, content=b"")],
+)
+async def test_missing_or_empty_media_download_is_unavailable(response):
     waha = _waha(lambda request: response)
     media = waha.media.media_ref({"url": "/api/files/demo/m1.jpg"}, "m1")
 
     assert await media.fetch(max_bytes=1024) is None
+
+
+def _refuse_connection(request):
+    raise httpx.ConnectError("connection refused", request=request)
+
+
+@pytest.mark.parametrize(
+    "handler",
+    [lambda request: httpx.Response(503), lambda request: httpx.Response(408), _refuse_connection],
+    ids=["server-error", "request-timeout", "connection-refused"],
+)
+async def test_media_download_failure_that_may_succeed_later_is_temporary(handler):
+    waha = _waha(handler)
+    media = waha.media.media_ref({"url": "/api/files/demo/m1.jpg"}, "m1")
+
+    with pytest.raises(TransientMediaError):
+        await media.fetch(max_bytes=1024)
 
 
 async def test_media_larger_than_limit_is_unavailable():

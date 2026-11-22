@@ -15,7 +15,7 @@ from ..config import AppConfig
 from ..core.domain import Attachment
 from ..core.health import HealthObservation
 from ..core.media import is_mp4_attachment
-from .waha_media import WAHAMediaFetcher
+from .waha_media import WAHAMediaFetcher, is_retryable_status
 
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ class WAHA:
                 await self._configure_session(webhook_url, events)
                 return
             except httpx.HTTPStatusError as exc:
-                if not _is_retryable(exc.response.status_code) or attempt == SESSION_SETUP_MAX_ATTEMPTS:
+                if not is_retryable_status(exc.response.status_code) or attempt == SESSION_SETUP_MAX_ATTEMPTS:
                     raise
             except httpx.TransportError:
                 if attempt == SESSION_SETUP_MAX_ATTEMPTS:
@@ -214,10 +214,6 @@ def _http_failure_observation(session_name: str, status_code: int) -> HealthObse
         f"api:http-{status_code}",
         f"WAHA health check for session {session_name} returned HTTP {status_code}.",
     )
-
-
-def _is_retryable(status_code: int) -> bool:
-    return status_code >= HTTPStatus.INTERNAL_SERVER_ERROR or status_code == HTTPStatus.REQUEST_TIMEOUT
 
 
 def _json_object(response: httpx.Response, error: str) -> dict[str, Any]:

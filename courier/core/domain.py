@@ -4,6 +4,10 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 
+class TransientMediaError(Exception):
+    """Media could not be fetched now, but fetching it again later may succeed."""
+
+
 class MediaRef(Protocol):
     """Media attached to a message whose bytes may not have been downloaded yet."""
 
@@ -14,7 +18,11 @@ class MediaRef(Protocol):
     def filename(self) -> str | None: ...
 
     async def fetch(self, *, max_bytes: int) -> bytes | None:
-        """Return the media bytes, or None when unavailable or larger than max_bytes. Never raises."""
+        """Return the media bytes, or None when they will never be available or exceed max_bytes.
+
+        Raises:
+            TransientMediaError: If the download failed in a way a later attempt may not.
+        """
         ...
 
 

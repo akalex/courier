@@ -6,7 +6,7 @@ import pytest
 
 from courier.adapters.waha import WAHA
 from courier.adapters.waha_ingress import WAHAWebhookIngress
-from courier.core.domain import Attachment
+from courier.core.domain import Attachment, TransientMediaError
 from courier.core.filters import KeywordFilter
 from courier.core.forwarder import Forwarder
 from courier.core.health import HealthObservation
@@ -199,3 +199,39 @@ async def test_only_new_source_chat_messages_that_pass_filters_download_media():
 
     assert fetched == ["http://waha:3000/api/files/demo/hit.jpg"]
     assert destination.sent == [("target@g.us", "urgent", (Attachment("image/jpeg", "hit.jpg", b"jpeg"),))]
+
+
+async def test_media_only_route_asks_waha_to_redeliver_after_a_temporary_download_failure():
+    responses = [httpx.Response(503), httpx.Response(200, content=b"video")]
+    fetched = []
+
+    def handler(request):
+        fetched.append(request.url.path)
+        return responses.pop(0)
+
+    destination = RecordingDestination()
+    forwarder = Forwarder(
+        source_chat_id="source@g.us",
+        target_chat_id="target@g.us",
+        destination=destination,
+        forward_content=("media",),
+        media_types=("video",),
+    )
+    ingress = _ingress(_waha(handler), on_message=forwarder.handle_message)
+    event = {
+        "event": "message",
+        "id": "evt-clip",
+        "payload": {
+            "id": "clip",
+            "chatId": "source@g.us",
+            "fromMe": False,
+            "media": {"url": "/api/files/demo/clip.mp4", "mimetype": "video/mp4", "filename": "clip.mp4"},
+        },
+    }
+
+    with pytest.raises(TransientMediaError):
+        await ingress.handle(event)
+    await ingress.handle(event)
+
+    assert fetched == ["/api/files/demo/clip.mp4", "/api/files/demo/clip.mp4"]
+    assert destination.sent == [("target@g.us", "", (Attachment("video/mp4", "clip.mp4", b"video"),))]

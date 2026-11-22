@@ -3,11 +3,12 @@ from __future__ import annotations
 import base64
 import logging
 from dataclasses import dataclass, field
+from http import HTTPStatus
 from typing import Any
 
 import httpx
 
-from ..core.domain import Attachment, MediaRef
+from ..core.domain import Attachment, MediaRef, TransientMediaError
 from .waha_payload import first
 
 
@@ -47,7 +48,10 @@ class WAHAMediaFetcher:
             async with self._http.stream("GET", str(resolved), timeout=MEDIA_DOWNLOAD_TIMEOUT) as response:
                 response.raise_for_status()
                 data = await _read_at_most(response, max_bytes)
-        except httpx.HTTPError:
+        except httpx.HTTPError as exc:
+            if _may_succeed_later(exc):
+                logger.warning("WAHA media for message id=%s is temporarily unavailable: %s", message_id, exc)
+                raise TransientMediaError(f"WAHA media for message id={message_id} is temporarily unavailable") from exc
             logger.warning(
                 "Failed to download WAHA media for message id=%s from %s; forwarding text only",
                 message_id,
@@ -98,6 +102,17 @@ class WAHAMediaRef:
 
     async def fetch(self, *, max_bytes: int) -> bytes | None:
         return await self.fetcher.download(self.url, self.message_id, max_bytes)
+
+
+def is_retryable_status(status_code: int) -> bool:
+    """Whether a WAHA HTTP error status may clear up on its own: a server error or a request timeout."""
+    return status_code >= HTTPStatus.INTERNAL_SERVER_ERROR or status_code == HTTPStatus.REQUEST_TIMEOUT
+
+
+def _may_succeed_later(error: httpx.HTTPError) -> bool:
+    if isinstance(error, httpx.HTTPStatusError):
+        return is_retryable_status(error.response.status_code)
+    return isinstance(error, httpx.TransportError)
 
 
 def _decode_inline(data: Any) -> bytes:

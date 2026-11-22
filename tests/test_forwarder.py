@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from courier.core.domain import Attachment, Message
+from courier.core.domain import Attachment, Message, TransientMediaError
 from courier.core.filters import AllOf, KeywordFilter, SenderFilter
 from courier.core.forwarder import Forwarder
 
@@ -32,6 +32,23 @@ class RecordingMedia:
         await asyncio.sleep(0)
         if self._data is None or len(self._data) > max_bytes:
             return None
+        return self._data
+
+
+class FlakyMedia:
+    """Lazy media whose download fails temporarily before it succeeds."""
+
+    def __init__(self, mime_type, filename, data, *, failures):
+        self.mime_type = mime_type
+        self.filename = filename
+        self._data = data
+        self._failures = failures
+        self.fetches = 0
+
+    async def fetch(self, *, max_bytes):
+        self.fetches += 1
+        if self.fetches <= self._failures:
+            raise TransientMediaError("WAHA returned HTTP 503")
         return self._data
 
 
@@ -412,6 +429,43 @@ async def test_forwarder_forwards_text_when_media_is_unavailable():
     await forwarder.handle_message(
         _message("no-media", text="caption", attachments=(RecordingMedia("image/jpeg", "gone.jpg", None),)),
     )
+
+    assert transport.sent == [{"chat_id": "target", "text": "caption", "attachments": ()}]
+
+
+@pytest.mark.asyncio
+async def test_forwarder_asks_for_redelivery_when_media_only_message_cannot_be_downloaded_yet():
+    transport = FakeTransport()
+    forwarder = Forwarder(
+        source_chat_id="source",
+        target_chat_id="target",
+        destination=transport,
+        forward_content=("media",),
+        media_types=("video",),
+    )
+    media = FlakyMedia("video/mp4", "clip.mp4", b"video", failures=1)
+    message = _message("video", attachments=(media,))
+
+    with pytest.raises(TransientMediaError):
+        await forwarder.handle_message(message)
+    assert transport.sent == []
+
+    await forwarder.handle_message(message)
+    await forwarder.handle_message(message)
+
+    assert media.fetches == 2
+    assert transport.sent == [
+        {"chat_id": "target", "text": "", "attachments": (Attachment("video/mp4", "clip.mp4", b"video"),)},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_forwarder_sends_text_when_media_is_temporarily_unavailable():
+    transport = FakeTransport()
+    forwarder = Forwarder(source_chat_id="source", target_chat_id="target", destination=transport)
+    media = FlakyMedia("image/jpeg", "photo.jpg", b"jpeg", failures=1)
+
+    await forwarder.handle_message(_message("captioned", text="caption", attachments=(media,)))
 
     assert transport.sent == [{"chat_id": "target", "text": "caption", "attachments": ()}]
 
