@@ -29,7 +29,8 @@ Courier receives WhatsApp messages from WAHA over its HTTP webhook and sends the
 - Forward message text and supported media from WhatsApp to WhatsApp or a Matrix room
 - Select whether a route forwards text, media, or both, and optionally restrict media categories
 - Filter by sender ID/name and/or included keywords, with optional excluded keywords
-- Deduplicate up to 1,000 successfully forwarded message IDs in memory
+- Deduplicate up to 1,000 handled message IDs in memory
+- Download media only for source-chat messages that pass the filters and match the selected media types
 - Retry failed webhook deliveries through WAHA's configured retry policy
 - Run locally or as a container, including on ARM64 and x86-64
 
@@ -50,13 +51,13 @@ uv sync --dev
 
 1. Courier loads and validates its settings from YAML and environment variables.
 2. It connects to the configured WhatsApp source (currently WAHA) using the configured API key.
-3. It finds or creates the configured WAHA session, registers its webhook for `message`, `message.any`, and `session.status`, and starts the session if needed. When upgrading from the old `courier` container, it removes the obsolete `http://courier:8000/webhook` entry from the existing session; no new session or QR scan is needed.
-4. WAHA sends message events to Courier's `POST /webhook` endpoint.
-5. Courier ignores events outside the configured source chat, applies filters, and sends the message to the configured destination.
+3. It finds or creates the configured WAHA session, registers its webhook for the events this container handles, and starts the session if needed. A forwarding route subscribes to `message` and `message.any`; health alerts add `session.status`. Courier sets exactly these events on its own webhook entry and replaces any others on that URL. When upgrading from the old `courier` container, it removes the obsolete `http://courier:8000/webhook` entry from the existing session; no new session or QR scan is needed.
+4. WAHA sends events to Courier's `POST /webhook` endpoint.
+5. Courier ignores events outside the configured source chat and applies filters before downloading any media. It downloads media only when it can match the selected media types, then sends the message to the configured destination.
 
 Courier also sends health notifications when the WAHA session stops, fails, or needs QR authentication, or when the WAHA API becomes unavailable. It checks worker/session health every 30 seconds and sends a recovery notification after service resumes. Set `ALERT_CHAT_ID` (or `alert_chat_id`) to choose a fixed recipient; when set, health alerts go only to that recipient, not to a route's `TARGET_CHAT_ID`. The Compose deployment passes the same `ALERT_CHAT_ID` to all Courier containers. If unset, each container defaults to its own `TARGET_CHAT_ID`. For a WAHA destination, use the recipient's WAHA chat ID, such as `15551234567@c.us`.
 
-In the default multi-route Compose deployment, `courier-health` is the dedicated health-monitor container and is the only Courier service that sends health notifications. The forwarding routes disable `HEALTH_ALERTS_ENABLED`. Standalone Courier instances default to sending health alerts.
+In the default multi-route Compose deployment, `courier-health` is the dedicated health-monitor container and is the only Courier service that sends health notifications. It runs with `HEALTH_MONITOR_ONLY=true`, so it subscribes only to `session.status` and never receives or downloads messages. `HEALTH_MONITOR_ONLY` requires `HEALTH_ALERTS_ENABLED`; Courier refuses to start with health-monitor-only mode and alerts disabled. The forwarding routes disable `HEALTH_ALERTS_ENABLED`, so they do not subscribe to `session.status`. Standalone Courier instances default to sending health alerts.
 
 Courier also exposes `GET /health` on the same listen port. The webhook server binds to all container interfaces; in a Compose deployment, WAHA should reach it through the private service network. Do not expose the webhook port to the public internet unless it is protected by an appropriate network or authentication layer.
 
@@ -123,14 +124,15 @@ For either route, add the existing `filters` settings to the same YAML file if y
 - Courier forwards at most one attachment per message. WhatsApp destinations use WAHA's `sendImage`, `sendVideo`, or `sendFile` endpoint. Matrix destinations upload media to the homeserver, then send an image, video, audio, or file event to the configured room.
 - `forward_content` can limit a route to `text`, `media`, or both (the default). `media_types` can restrict attachments to `image`, `video`, `audio`, and/or `file`. A media-only route drops messages without an eligible attachment and does not forward captions.
 - If WAHA reports that inline WEBJS video sending requires the `devlikeapro/waha:chrome` image, Courier retries the video as a file attachment. This fallback may not be downloadable as a video in every WhatsApp client. WAHA's `chrome` image is amd64-only; the ARM image used on ARM64 hosts does not support inline WEBJS video. For reliable inline video delivery, run WAHA on an amd64 host with the `chrome` image.
-- With text forwarding enabled, media download failures, unsafe media URLs, and empty media do not discard the text/caption. An attachment larger than `max_attachment_size` is skipped; Courier sends the text/caption instead. The size limit defaults to 20 MiB. Media is downloaded before this forwarding-size check, so the setting does not limit download bandwidth or peak download memory.
+- With text forwarding enabled, media download failures, unsafe media URLs, and empty media do not discard the text/caption. An attachment larger than `max_attachment_size` is skipped; Courier sends the text/caption instead. The size limit defaults to 20 MiB. Courier stops a media download as soon as it exceeds this limit, so the setting also bounds the memory a download can use.
+- Media is downloaded only for messages from the source chat that pass the filters, and only when the attachment can match `media_types`. A generic binary file (`application/octet-stream`) without a video extension is downloaded when either `video` or `file` is selected, because only its bytes show whether it is an MP4.
 - Media URLs are fetched only when they resolve to the configured WAHA origin. Loopback media URLs are rewritten to the configured WAHA host. This prevents Courier's WAHA API-key header from being sent to an unrelated host; URLs on another hostname/origin are skipped.
 - Included keywords search the message text/caption using case-insensitive substring matching. A keyword filter accepts a message if any configured keyword matches.
 - Excluded keywords are also case-insensitive substring matches against the text/caption. If any excluded keyword appears, the message is rejected even when it matches an included keyword or sender. Exclusions are vetoes; included keywords and sender criteria retain their OR behavior.
 - Sender filters match the normalized sender ID or sender name. Normalization is case-insensitive and strips a leading `+` and any `@...` suffix.
 - If both keyword and sender filters are configured, they are combined with **OR**: matching either filter is sufficient. With no filters configured, every message from the source chat is eligible. A media-only message has no matching keyword text, so it passes a keyword filter only if there is a matching caption.
 - Courier ignores messages sent by its linked WhatsApp account by default. Enable `include_from_me` only when needed, and keep source and target chat IDs different to avoid forwarding loops.
-- The successful-message deduplication cache holds at most 1,000 message IDs in memory. It is not persisted and is cleared on restart. A failed send is not cached, so WAHA can retry it. Retries reduce message loss but do not guarantee exactly-once delivery: a send may have succeeded at WAHA even if Courier did not receive its response, and a later retry can create a duplicate.
+- WAHA can deliver the same message as both a `message` and a `message.any` event; Courier processes it once. The deduplication cache holds at most 1,000 message IDs in memory: messages that were sent, and messages dropped after their media was downloaded. Filtered messages are not cached, since checking them again needs no download. Messages without an ID are never deduplicated. The cache is not persisted and is cleared on restart. A failed send is not cached, so WAHA can retry it. Retries reduce message loss but do not guarantee exactly-once delivery: a send may have succeeded at WAHA even if Courier did not receive its response, and a later retry can create a duplicate.
 - Courier configures WAHA webhook retries as exponential with `delaySeconds: 2` and `attempts: 10` when adding its webhook or when the existing Courier webhook has no retry configuration. Explicit retry configuration on an existing webhook is preserved. WAHA's retry behavior is not a durable queue.
 - Incoming webhook requests have a 1 MiB body limit, a 64 KiB header limit, and a 10-second request timeout. Chunked transfer encoding is not supported.
 - During startup, Courier retries WAHA session setup after server errors or connection failures, for up to 12 attempts with a 5-second delay between attempts. Configuration/client errors are surfaced instead of retried.
@@ -567,7 +569,7 @@ A SemVer tag publishes `X.Y.Z`, `X.Y`, `X`, `latest`, and the full commit SHA im
 
 Runtime credentials stay on the VM in the ignored `.env` file, not in Git. WAHA's web UI is bound to the VM's loopback interface; use the HTTPS Nginx proxy for browser access and never expose port `3000` publicly.
 
-The WAHA adapter listens for inbound webhook events on `/webhook` using `LISTEN_PORT`. Each route registers its own webhook to its corresponding service over the private Compose network.
+Courier listens for inbound webhook events on `/webhook` using `LISTEN_PORT`. Each route registers its own webhook to its corresponding service over the private Compose network.
 
 ## Development
 
@@ -596,23 +598,22 @@ Run the service locally with `uv run python -m courier.main`. The configuration 
 ```text
 courier/
   adapters/
-    __init__.py
-    matrix.py
-    waha.py
-  __init__.py
-  config.py
-  domain.py
-  filters.py
-  forwarder.py
+    matrix.py          # Matrix destination
+    waha.py            # WAHA session client: sending, health probe, session setup
+    waha_ingress.py    # WAHA webhook events -> forwarder and health monitor
+    waha_media.py      # lazy WAHA media references and origin-checked downloads
+    waha_payload.py    # WAHA message payload parsing
+  config/              # YAML and environment configuration
+  core/
+    domain.py          # Message, Attachment, MediaRef
+    filters.py
+    forwarder.py       # filtering, media selection, deduplication, sending
+    health.py          # alert-once health state and polling
+    media.py           # media-kind classification
+    ports.py
+  infrastructure/      # webhook HTTP server and logging context
   main.py
-  ports.py
-  webhook_server.py
 tests/
-  test_config.py
-  test_filters.py
-  test_forwarder.py
-  test_waha_adapter.py
-  test_webhook_server.py
 ```
 
-`main.py` composes configuration, filters, forwarding, and separate source/destination adapters. `forwarder.py` contains source filtering, attachment-size checks, and bounded in-memory deduplication. `adapters/waha.py` handles WhatsApp events and WAHA API/session behavior; `adapters/matrix.py` sends messages and media to Matrix rooms. `webhook_server.py` provides the inbound HTTP endpoint.
+`main.py` wires one route: the destination, the `Forwarder`, the optional `SessionHealthMonitor`, and the `WAHAWebhookIngress` that the webhook server calls. `core/` holds the forwarding and health decisions and has no WAHA or HTTP knowledge. The WAHA adapter translates between WAHA's API and those core types.
