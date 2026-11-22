@@ -2,6 +2,16 @@
 
 Notable changes to Courier are documented here. This changelog follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use Semantic Versioning.
 
+## [0.5.0] - 2026-11-22
+
+### Changed
+
+- Organize Courier modules into core, configuration, infrastructure, and adapter packages.
+- Split WAHA payload parsing and media hydration from the transport.
+- Move Matrix attachment upload and content construction into focused helpers.
+- Simplify configuration environment overrides and Forwarder concurrency.
+- Extract HTTP parsing and response handling from the webhook server.
+
 ## [0.4.4] - 2026-11-22
 
 ### Fixed

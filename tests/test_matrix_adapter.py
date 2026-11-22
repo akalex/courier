@@ -5,7 +5,7 @@ import pytest
 
 from courier import __version__
 from courier.adapters.matrix import MatrixDestination
-from courier.domain import Attachment
+from courier.core.domain import Attachment
 
 
 @pytest.mark.asyncio
@@ -89,6 +89,47 @@ async def test_send_image_uploads_media_then_sends_matrix_attachment():
         "url": "mxc://matrix.example.org/media-id",
         "info": {"mimetype": "image/jpeg", "size": 11},
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mime_type", "msgtype"),
+    [
+        ("video/mp4", "m.video"),
+        ("audio/ogg", "m.audio"),
+        ("application/pdf", "m.file"),
+    ],
+)
+async def test_send_attachment_selects_matrix_message_type(mime_type, msgtype):
+    sent_content = {}
+
+    async def handler(request):
+        if request.url.path.endswith("/upload"):
+            return httpx.Response(
+                200,
+                json={"content_uri": "mxc://matrix.example.org/media-id"},
+                request=request,
+            )
+        sent_content.update(json.loads(request.content))
+        return httpx.Response(200, json={"event_id": "$event"}, request=request)
+
+    async with httpx.AsyncClient(
+        base_url="https://matrix.example.org",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        destination = MatrixDestination(
+            homeserver_url="https://matrix.example.org",
+            access_token="token",
+            client=client,
+        )
+        await destination.send(
+            "!room:example.org",
+            "",
+            attachments=(Attachment(mime_type, "media.bin", b"media"),),
+        )
+
+    assert sent_content["msgtype"] == msgtype
+    assert sent_content["body"] == "media.bin"
 
 
 @pytest.mark.asyncio

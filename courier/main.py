@@ -7,11 +7,11 @@ from collections.abc import Callable
 
 from .adapters import WAHATransport, build_matrix_destination, build_waha_transport
 from .config import AppConfig, load_config
-from .domain import Message
-from .filters import AllOf, AnyOf, ExcludeKeywordFilter, KeywordFilter, SenderFilter
-from .forwarder import Forwarder
-from .logging_context import CourierLogContextFilter
-from .ports import Filter, MessageDestination, MessageSource
+from .core.domain import Message
+from .core.filters import AllOf, AnyOf, ExcludeKeywordFilter, KeywordFilter, SenderFilter
+from .core.forwarder import Forwarder
+from .core.ports import Filter, MessageDestination, MessageSource
+from .infrastructure.logging_context import CourierLogContextFilter
 
 
 logger = logging.getLogger(__name__)

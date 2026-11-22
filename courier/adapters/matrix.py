@@ -8,7 +8,7 @@ import httpx
 
 from .. import __version__
 from ..config import AppConfig
-from ..domain import Attachment
+from ..core.domain import Attachment
 
 
 logger = logging.getLogger(__name__)
@@ -32,40 +32,10 @@ class MatrixDestination:
 
     async def send(self, chat_id: str, text: str, attachments: tuple[Attachment, ...] = ()) -> None:
         """Send a Matrix room message, uploading its first attachment when present."""
-        content: dict[str, object]
         if attachments:
             attachment = attachments[0]
-            upload_response = await self.client.post(
-                "/_matrix/client/v3/upload",
-                params={"filename": attachment.filename or "attachment"},
-                content=attachment.data,
-                headers={"Content-Type": attachment.mime_type},
-            )
-            upload_response.raise_for_status()
-            try:
-                upload_data = upload_response.json()
-            except ValueError as exc:
-                raise ValueError("Matrix returned an invalid media upload response") from exc
-            content_uri = upload_data.get("content_uri") if isinstance(upload_data, dict) else None
-            if not isinstance(content_uri, str) or not content_uri.startswith("mxc://"):
-                raise ValueError("Matrix media upload response is missing a valid content_uri")
-
-            msgtype = (
-                "m.image"
-                if attachment.mime_type.startswith("image/")
-                else "m.video"
-                if attachment.mime_type.startswith("video/")
-                else "m.audio"
-                if attachment.mime_type.startswith("audio/")
-                else "m.file"
-            )
-            content = {
-                "msgtype": msgtype,
-                "body": text or attachment.filename or "attachment",
-                "filename": attachment.filename or "attachment",
-                "url": content_uri,
-                "info": {"mimetype": attachment.mime_type, "size": len(attachment.data)},
-            }
+            content_uri = await self._upload_attachment(attachment)
+            content = self._attachment_content(text, attachment, content_uri)
         else:
             content = {"msgtype": "m.text", "body": text}
 
@@ -80,6 +50,46 @@ class MatrixDestination:
         except httpx.HTTPStatusError:
             logger.exception("Matrix message send failed for room_id=%s", chat_id)
             raise
+
+    async def _upload_attachment(self, attachment: Attachment) -> str:
+        response = await self.client.post(
+            "/_matrix/client/v3/upload",
+            params={"filename": attachment.filename or "attachment"},
+            content=attachment.data,
+            headers={"Content-Type": attachment.mime_type},
+        )
+        response.raise_for_status()
+        try:
+            upload_data = response.json()
+        except ValueError as exc:
+            raise ValueError("Matrix returned an invalid media upload response") from exc
+        content_uri = upload_data.get("content_uri") if isinstance(upload_data, dict) else None
+        if not isinstance(content_uri, str) or not content_uri.startswith("mxc://"):
+            raise ValueError("Matrix media upload response is missing a valid content_uri")
+        return content_uri
+
+    @staticmethod
+    def _attachment_content(text: str, attachment: Attachment, content_uri: str) -> dict[str, object]:
+        media_type = next(
+            (
+                matrix_type
+                for mime_prefix, matrix_type in (
+                    ("image/", "m.image"),
+                    ("video/", "m.video"),
+                    ("audio/", "m.audio"),
+                )
+                if attachment.mime_type.startswith(mime_prefix)
+            ),
+            "m.file",
+        )
+        filename = attachment.filename or "attachment"
+        return {
+            "msgtype": media_type,
+            "body": text or filename,
+            "filename": filename,
+            "url": content_uri,
+            "info": {"mimetype": attachment.mime_type, "size": len(attachment.data)},
+        }
 
     async def stop(self) -> None:
         """Close the Matrix HTTP client."""

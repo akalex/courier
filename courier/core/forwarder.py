@@ -49,6 +49,7 @@ class Forwarder:
             raise ValueError("recent_ids must be greater than zero")
         self._recent_ids_limit = recent_ids
         self._recent_ids: OrderedDict[str, None] = OrderedDict()
+        self._in_flight_ids: set[str] = set()
         self._lock = asyncio.Lock()
         self.max_attachment_size = max_attachment_size
         self.forward_content = frozenset(forward_content)
@@ -68,29 +69,39 @@ class Forwarder:
             return
 
         async with self._lock:
-            if message.id in self._recent_ids:
+            if message.id in self._recent_ids or message.id in self._in_flight_ids:
                 logger.info("Dropping duplicate forwarded message id=%s", message.id)
                 return
+            self._in_flight_ids.add(message.id)
 
-            if not self.filter_policy.matches(message):
-                logger.info("Filtered out message id=%s chat_id=%s", message.id, message.chat_id)
-                return
+        if not self.filter_policy.matches(message):
+            await self._release_message(message.id)
+            logger.info("Filtered out message id=%s chat_id=%s", message.id, message.chat_id)
+            return
 
-            formatted_text = self._format_text(message) if "text" in self.forward_content else ""
-            attachments = self._sanitize_attachments(message)
-            if not formatted_text and not attachments:
-                logger.info("Dropping message id=%s with no eligible content", message.id)
-                return
-            try:
-                await self.destination.send(self.target_chat_id, formatted_text, attachments)
-            except Exception:
-                logger.exception("Failed to forward message id=%s to chat_id=%s", message.id, self.target_chat_id)
-                raise
+        formatted_text = self._format_text(message) if "text" in self.forward_content else ""
+        attachments = self._sanitize_attachments(message)
+        if not formatted_text and not attachments:
+            await self._release_message(message.id)
+            logger.info("Dropping message id=%s with no eligible content", message.id)
+            return
+        try:
+            await self.destination.send(self.target_chat_id, formatted_text, attachments)
+        except Exception:
+            await self._release_message(message.id)
+            logger.exception("Failed to forward message id=%s to chat_id=%s", message.id, self.target_chat_id)
+            raise
 
+        async with self._lock:
+            self._in_flight_ids.discard(message.id)
             self._recent_ids[message.id] = None
             if len(self._recent_ids) > self._recent_ids_limit:
                 self._recent_ids.popitem(last=False)
-            logger.info("Forwarded message id=%s from chat_id=%s", message.id, message.chat_id)
+        logger.info("Forwarded message id=%s from chat_id=%s", message.id, message.chat_id)
+
+    async def _release_message(self, message_id: str) -> None:
+        async with self._lock:
+            self._in_flight_ids.discard(message_id)
 
     def _format_text(self, message: Message) -> str:
         """Preserve the original message text without adding a sender prefix.

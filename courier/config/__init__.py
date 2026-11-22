@@ -135,19 +135,26 @@ def _coerce_string(value: Any, *, name: str, default: str = "") -> str:
     return str(value).strip()
 
 
+def _env_value(name: str, fallback: Any, *, allow_empty: bool = True) -> Any:
+    value = os.getenv(name)
+    if value is not None and (allow_empty or value.strip()):
+        return value
+    return fallback
+
+
 def _matrix_settings(raw: dict[str, Any]) -> tuple[str, str]:
     matrix_config = raw.get("matrix") or {}
     if not isinstance(matrix_config, dict):
         raise ValueError("Config field 'matrix' must be a mapping")
     homeserver_url = _coerce_string(
-        os.getenv(
+        _env_value(
             "MATRIX_HOMESERVER_URL",
             raw.get("matrix_homeserver_url") or matrix_config.get("homeserver_url") or "",
         ),
         name="matrix.homeserver_url",
     ).rstrip("/")
     access_token = _coerce_string(
-        os.getenv(
+        _env_value(
             "MATRIX_ACCESS_TOKEN",
             raw.get("matrix_access_token") or matrix_config.get("access_token") or "",
         ),
@@ -223,60 +230,89 @@ def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
         default=("image", "video", "audio", "file"),
     )
 
-    transport = _coerce_string(os.getenv("TRANSPORT", raw.get("transport", "waha")), name="transport").lower()
+    transport = _coerce_string(
+        _env_value("TRANSPORT", raw.get("transport", "waha")),
+        name="transport",
+    ).lower()
     source_transport = _coerce_string(
-        os.getenv("SOURCE_TRANSPORT", raw.get("source_transport", transport)),
+        _env_value("SOURCE_TRANSPORT", raw.get("source_transport", transport)),
         name="source_transport",
     ).lower()
     destination_transport = _coerce_string(
-        os.getenv("DESTINATION_TRANSPORT", raw.get("destination_transport", transport)),
+        _env_value("DESTINATION_TRANSPORT", raw.get("destination_transport", transport)),
         name="destination_transport",
     ).lower()
     if not source_transport or not destination_transport:
         raise ValueError("Config requires a transport name (for example: 'waha')")
 
-    source_chat_id = _coerce_string(os.getenv("SOURCE_CHAT_ID", raw.get("source_chat_id")), name="source_chat_id")
-    target_chat_id = _coerce_string(os.getenv("TARGET_CHAT_ID", raw.get("target_chat_id")), name="target_chat_id")
+    source_chat_id = _coerce_string(
+        _env_value("SOURCE_CHAT_ID", raw.get("source_chat_id")),
+        name="source_chat_id",
+    )
+    target_chat_id = _coerce_string(
+        _env_value("TARGET_CHAT_ID", raw.get("target_chat_id")),
+        name="target_chat_id",
+    )
     alert_chat_id = _coerce_string(
-        os.getenv("ALERT_CHAT_ID") or raw.get("alert_chat_id") or target_chat_id,
+        _env_value("ALERT_CHAT_ID", raw.get("alert_chat_id") or target_chat_id, allow_empty=False),
         name="alert_chat_id",
     )
-    listen_port = _coerce_int(os.getenv("LISTEN_PORT", raw.get("listen_port", 8000)), name="listen_port")
+    listen_port = _coerce_int(
+        _env_value("LISTEN_PORT", raw.get("listen_port", 8000)),
+        name="listen_port",
+    )
     max_attachment_size = _coerce_int(
         raw.get("max_attachment_size", 20 * 1024 * 1024),
         name="max_attachment_size",
     )
-    log_level = _coerce_string(os.getenv("LOG_LEVEL", raw.get("log_level", "INFO")), name="log_level").upper()
+    log_level = _coerce_string(
+        _env_value("LOG_LEVEL", raw.get("log_level", "INFO")),
+        name="log_level",
+    ).upper()
     if log_level not in logging.getLevelNamesMapping():
         raise ValueError(f"Config field 'log_level' has unsupported value: {log_level}")
 
     waha_url = _coerce_string(
-        os.getenv("WAHA_URL", raw.get("waha_url") or waha_config.get("url") or "http://localhost:3000"),
+        _env_value(
+            "WAHA_URL",
+            raw.get("waha_url") or waha_config.get("url") or "http://localhost:3000",
+        ),
         name="waha_url",
     )
     waha_api_key = _coerce_string(
-        os.getenv("WAHA_API_KEY", raw.get("waha_api_key") or waha_config.get("api_key") or ""),
+        _env_value(
+            "WAHA_API_KEY",
+            raw.get("waha_api_key") or waha_config.get("api_key") or "",
+        ),
         name="waha_api_key",
     )
     waha_session = _coerce_string(
-        os.getenv("WAHA_SESSION", raw.get("waha_session") or waha_config.get("session") or "default"),
+        _env_value(
+            "WAHA_SESSION",
+            raw.get("waha_session") or waha_config.get("session") or "default",
+        ),
         name="waha_session",
     )
     webhook_url = _coerce_string(
-        os.getenv("WHATSAPP_HOOK_URL", raw.get("webhook_url") or "http://localhost:8000/webhook"),
+        _env_value(
+            "WHATSAPP_HOOK_URL",
+            raw.get("webhook_url") or "http://localhost:8000/webhook",
+        ),
         name="webhook_url",
     )
     matrix_homeserver_url, matrix_access_token = _matrix_settings(raw)
-    include_from_me_value: Any = os.getenv("INCLUDE_FROM_ME")
-    if include_from_me_value is None or not include_from_me_value.strip():
-        include_from_me_value = raw.get("include_from_me", False)
+    include_from_me_value = _env_value(
+        "INCLUDE_FROM_ME",
+        raw.get("include_from_me", False),
+        allow_empty=False,
+    )
     include_from_me = _coerce_bool(include_from_me_value, name="include_from_me")
     health_alerts_enabled = _coerce_bool(
-        os.getenv("HEALTH_ALERTS_ENABLED", raw.get("health_alerts_enabled", True)),
+        _env_value("HEALTH_ALERTS_ENABLED", raw.get("health_alerts_enabled", True)),
         name="health_alerts_enabled",
     )
     health_monitor_only = _coerce_bool(
-        os.getenv("HEALTH_MONITOR_ONLY", raw.get("health_monitor_only", False)),
+        _env_value("HEALTH_MONITOR_ONLY", raw.get("health_monitor_only", False)),
         name="health_monitor_only",
     )
     filters = FilterSettings(

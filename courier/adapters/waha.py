@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
-from dataclasses import replace
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
@@ -13,10 +13,12 @@ import httpx
 
 from .. import __version__
 from ..config import AppConfig
-from ..domain import Attachment, Message
-from ..logging_context import log_context
-from ..media import is_mp4_attachment
-from ..webhook_server import WebhookServer
+from ..core.domain import Attachment, Message
+from ..core.media import is_mp4_attachment
+from ..infrastructure.logging_context import log_context
+from ..infrastructure.webhook_server import WebhookServer
+from .waha_media import WAHAMediaHydrator
+from .waha_payload import WAHAWebhookParser, coalesce
 
 
 logger = logging.getLogger(__name__)
@@ -26,34 +28,11 @@ SESSION_MONITOR_INTERVAL = 30
 SESSION_SETUP_MAX_ATTEMPTS = 12
 SESSION_SETUP_RETRY_DELAY_SECONDS = 5
 LEGACY_COURIER_WEBHOOK_URL = "http://courier:8000/webhook"
-
-
-def _first(mapping: dict[str, Any], *keys: str) -> Any:
-    """Return the first non-empty value from a mapping for the requested keys."""
-    for key in keys:
-        if key in mapping and mapping[key] not in (None, ""):
-            return mapping[key]
-    return None
-
-
-def _normalize_sender(value: Any) -> str:
-    """Normalize sender IDs by removing leading plus signs and email suffixes."""
-    normalized = str(value or "").strip()
-    if not normalized:
-        return ""
-    if normalized.startswith("+"):
-        normalized = normalized[1:]
-    if "@" in normalized:
-        normalized = normalized.split("@", 1)[0]
-    return normalized
+WAHA_RECENT_MESSAGE_IDS = 1000
 
 
 def _coalesce(*values: Any) -> str:
-    """Return the first non-empty argument converted to a string."""
-    for value in values:
-        if value not in (None, ""):
-            return str(value)
-    return ""
+    return coalesce(*values)
 
 
 def _with_required_events(config: dict[str, Any], webhook_url: str) -> list[dict[str, Any]]:
@@ -105,6 +84,10 @@ class WAHATransport:
         self._alert_handler: Callable[[str], Awaitable[None]] | None = None
         self._monitor_task: asyncio.Task[None] | None = None
         self._active_alert: str | None = None
+        self._recent_message_ids: OrderedDict[str, None] = OrderedDict()
+        self._recent_message_ids_lock = asyncio.Lock()
+        self._payload_parser = WAHAWebhookParser(include_from_me=include_from_me)
+        self._media_hydrator = WAHAMediaHydrator(base_url=base_url)
         self._webhook_server = WebhookServer(
             host="0.0.0.0",
             port=self.listen_port,
@@ -218,22 +201,31 @@ class WAHATransport:
             return
         message = self._message_from_payload(payload)
         if message is not None:
+            if not await self._claim_message(message.id):
+                logger.info("Dropping duplicate WAHA message before media hydration id=%s", message.id)
+                return
             webhook_metadata = payload.get("_courier_webhook")
             request_id = webhook_metadata.get("request_id") if isinstance(webhook_metadata, dict) else None
+            event_id = _coalesce(payload.get("id"))
+            message_id = message.id
             with log_context(
                 request_id=str(request_id) if request_id else None,
-                event_id=_coalesce(payload.get("id")) or None,
-                message_id=message.id or None,
+                event_id=event_id,
+                message_id=message_id,
             ):
                 logger.info(
                     "Received WAHA message event=%s event_id=%s request_id=%s message_id=%s chat_id=%s",
                     payload.get("event") or "unknown",
-                    _coalesce(payload.get("id")) or "-",
+                    event_id or "-",
                     str(request_id or "-"),
-                    message.id or "-",
+                    message_id or "-",
                     message.chat_id,
                 )
-                await self._dispatch_message(message, payload)
+                try:
+                    await self._dispatch_message(message, payload)
+                except Exception:
+                    await self._release_message(message.id)
+                    raise
 
     async def _handle_session_status(self, event: dict[str, Any]) -> None:
         event_payload = event.get("payload")
@@ -425,6 +417,23 @@ class WAHATransport:
             )
             raise
 
+    async def _claim_message(self, message_id: str) -> bool:
+        if not message_id:
+            return True
+        async with self._recent_message_ids_lock:
+            if message_id in self._recent_message_ids:
+                return False
+            self._recent_message_ids[message_id] = None
+            if len(self._recent_message_ids) > WAHA_RECENT_MESSAGE_IDS:
+                self._recent_message_ids.popitem(last=False)
+        return True
+
+    async def _release_message(self, message_id: str) -> None:
+        if not message_id:
+            return
+        async with self._recent_message_ids_lock:
+            self._recent_message_ids.pop(message_id, None)
+
     async def _dispatch_message(self, message: Message, payload: dict[str, Any]) -> None:
         """Hydrate and dispatch a WAHA message through the forwarder callback.
 
@@ -440,194 +449,15 @@ class WAHATransport:
             await self._on_message(hydrated)
 
     async def _hydrate_media(self, message: Message, payload: dict[str, Any]) -> Message:
-        """Attach downloaded media bytes back to a normalized WAHA message.
-
-        Args:
-            message: Message to enrich with media data.
-            payload: WAHA media payload dictionary.
-
-        Returns:
-            The message with media attachments restored when possible.
-
-        Raises:
-            ValueError: If the payload cannot be decoded as media content.
-        """
-        media = payload.get("media") if isinstance(payload, dict) else None
-        if not isinstance(media, dict):
-            return message
-
-        media_url = _first(media, "url", "mediaUrl")
-        if not media_url:
-            payload_data = media.get("data")
-            if payload_data:
-                try:
-                    decoded = base64.b64decode(payload_data, validate=False)
-                except Exception:
-                    decoded = b""
-                attachments = tuple(
-                    Attachment(
-                        mime_type=media.get("mimeType") or media.get("mimetype") or attachment.mime_type,
-                        filename=media.get("fileName") or media.get("filename") or attachment.filename,
-                        data=decoded if attachment.data == b"" else attachment.data,
-                    )
-                    for attachment in message.attachments
-                )
-                return replace(message, attachments=attachments)
-            return replace(message, attachments=())
-
-        resolved_media_url = self._resolve_media_url(media_url, message.id)
-        if resolved_media_url is None:
-            return replace(message, attachments=())
-
-        try:
-            if self.session is None:
-                return replace(message, attachments=())
-            logger.info("Downloading WAHA media for message id=%s", message.id or "-")
-            response = await self.session.get(
-                str(resolved_media_url),
-                timeout=httpx.Timeout(20.0, connect=10.0, read=20.0),
-            )
-            response.raise_for_status()
-            data = response.content
-            if not data:
-                logger.warning("WAHA returned empty media for message id=%s; forwarding text only", message.id)
-                return replace(message, attachments=())
-            logger.info(
-                "Downloaded WAHA media for message id=%s bytes=%d",
-                message.id or "-",
-                len(data),
-            )
-        except httpx.HTTPError:
-            logger.warning(
-                "Failed to download WAHA media for message id=%s from %s; forwarding text only",
-                message.id,
-                resolved_media_url,
-                exc_info=True,
-            )
-            return replace(message, attachments=())
-
-        attachment = (
-            message.attachments[0]
-            if message.attachments
-            else Attachment(
-                mime_type=media.get("mimeType") or media.get("mimetype") or "application/octet-stream",
-                filename=media.get("fileName") or media.get("filename") or "attachment",
-                data=data,
-            )
-        )
-        attachments = (Attachment(attachment.mime_type, attachment.filename, data),)
-        return replace(message, attachments=attachments)
+        """Attach downloaded media bytes back to a normalized WAHA message."""
+        return await self._media_hydrator.hydrate(message, payload, self.session)
 
     def _resolve_media_url(self, media_url: Any, message_id: str) -> httpx.URL | None:
-        base_url = httpx.URL(self.base_url)
-        try:
-            resolved_media_url = base_url.join(str(media_url))
-        except TypeError, ValueError:
-            logger.warning("Skipping invalid WAHA media URL for message id=%s", message_id)
-            return None
-        if resolved_media_url.host in {"localhost", "127.0.0.1", "::1"}:
-            resolved_media_url = resolved_media_url.copy_with(
-                scheme=base_url.scheme,
-                host=base_url.host,
-                port=base_url.port,
-            )
-        if (
-            resolved_media_url.username
-            or resolved_media_url.password
-            or resolved_media_url.scheme != base_url.scheme
-            or resolved_media_url.host != base_url.host
-            or resolved_media_url.port != base_url.port
-        ):
-            logger.warning("Skipping WAHA media download from a non-WAHA origin for message id=%s", message_id)
-            return None
-        return resolved_media_url
+        return self._media_hydrator.resolve_media_url(media_url, message_id)
 
     def _message_from_payload(self, payload: Any) -> Message | None:
-        """Parse a WAHA event payload into the normalized Courier message model.
-
-        Args:
-            payload: Raw WAHA event payload dictionary.
-
-        Returns:
-            A normalized message, or None if the payload is not a message event.
-
-        Raises:
-            ValueError: If the payload cannot be parsed into a valid sender/chat tuple.
-        """
-        if not isinstance(payload, dict):
-            return None
-
-        event = payload.get("event")
-        if event and event not in {"message", "message.any"}:
-            return None
-
-        event_data = payload.get("payload") if isinstance(payload.get("payload"), dict) else payload
-        if not isinstance(event_data, dict):
-            return None
-
-        from_me = event_data.get("fromMe")
-        if from_me is True and not self.include_from_me:
-            logger.debug("Ignoring WAHA message from self; sender_id=%s", event_data.get("participant"))
-            return None
-
-        chat_id = _coalesce(
-            event_data.get("chatId"),
-            event_data.get("chat_id"),
-            (event_data.get("chat") or {}).get("id"),
-            event_data.get("to") if from_me is True else event_data.get("from"),
-        )
-        if not chat_id:
-            return None
-
-        participant = _coalesce(
-            event_data.get("participant"),
-            event_data.get("from"),
-            event_data.get("sender"),
-            (event_data.get("sender") or {}).get("id"),
-            (event_data.get("author") or {}).get("id"),
-        )
-        sender_id = _normalize_sender(participant)
-        sender_name = _coalesce(
-            event_data.get("senderName"),
-            event_data.get("pushName"),
-            event_data.get("sender_name"),
-            (event_data.get("sender") or {}).get("name"),
-            (event_data.get("author") or {}).get("name"),
-            sender_id,
-        )
-
-        logger.debug(
-            "WAHA raw sender id=%s name=%s chat_id=%s",
-            _coalesce(event_data.get("participant"), event_data.get("from"), event_data.get("sender")),
-            _coalesce(event_data.get("senderName"), event_data.get("pushName"), event_data.get("sender_name")),
-            chat_id,
-        )
-
-        text = _coalesce(
-            event_data.get("body"),
-            event_data.get("text"),
-            event_data.get("caption"),
-            event_data.get("content"),
-            event_data.get("conversation"),
-        )
-
-        attachments: list[Attachment] = []
-        media = event_data.get("media")
-        if isinstance(media, dict):
-            mime_type = media.get("mimeType") or media.get("mimetype") or "application/octet-stream"
-            file_name = media.get("fileName") or media.get("filename") or "attachment"
-            data = b""
-            attachments.append(Attachment(mime_type=mime_type, filename=file_name, data=data))
-
-        message_id = _coalesce(event_data.get("id"), event_data.get("messageId"))
-        return Message(
-            id=message_id,
-            chat_id=chat_id,
-            sender_id=sender_id,
-            sender_name=sender_name,
-            text=text,
-            attachments=tuple(attachments),
-        )
+        """Parse a WAHA event payload into the normalized Courier message model."""
+        return self._payload_parser.message_from_payload(payload)
 
 
 def build_waha_transport(config: AppConfig) -> WAHATransport:

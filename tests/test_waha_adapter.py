@@ -7,8 +7,8 @@ import pytest
 
 from courier import __version__
 from courier.adapters.waha import WAHATransport
-from courier.domain import Attachment, Message
-from courier.webhook_server import WebhookServer
+from courier.core.domain import Attachment, Message
+from courier.infrastructure.webhook_server import WebhookServer
 
 
 @pytest.mark.asyncio
@@ -369,6 +369,42 @@ async def test_hydrate_media_rejects_external_origin_without_request():
     assert requested_urls == []
     assert hydrated.text == "caption"
     assert hydrated.attachments == ()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_webhook_skips_media_hydration():
+    requested_urls = []
+
+    async def handler(request):
+        requested_urls.append(str(request.url))
+        return httpx.Response(200, content=b"video-data")
+
+    transport = WAHATransport(
+        session_name="default",
+        base_url="http://waha:3000",
+        api_key="secret",
+        webhook_url="http://courier:8000/webhook",
+    )
+    transport._on_message = AsyncMock()
+    payload = {
+        "event": "message",
+        "id": "event-1",
+        "payload": {
+            "id": "message-1",
+            "chatId": "group@g.us",
+            "fromMe": False,
+            "body": "video caption",
+            "media": {"url": "http://waha:3000/api/files/default/message-1.mp4"},
+        },
+    }
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        transport.session = client
+        await transport._handle_webhook(payload)
+        await transport._handle_webhook({**payload, "event": "message.any", "id": "event-2"})
+
+    assert requested_urls == ["http://waha:3000/api/files/default/message-1.mp4"]
+    transport._on_message.assert_awaited_once()
 
 
 @pytest.mark.asyncio

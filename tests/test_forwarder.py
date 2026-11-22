@@ -1,8 +1,10 @@
+import asyncio
+
 import pytest
 
-from courier.domain import Attachment, Message
-from courier.filters import AllOf, KeywordFilter, SenderFilter
-from courier.forwarder import Forwarder
+from courier.core.domain import Attachment, Message
+from courier.core.filters import AllOf, KeywordFilter, SenderFilter
+from courier.core.forwarder import Forwarder
 
 
 class FakeTransport:
@@ -119,6 +121,46 @@ async def test_forwarder_retries_failed_send_and_deduplicates_after_success():
     await forwarder.handle_message(message)
 
     assert len(transport.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_forwarder_drops_concurrent_duplicate_without_serializing_network_sends():
+    class BlockingTransport(FakeTransport):
+        def __init__(self):
+            super().__init__()
+            self.first_started = asyncio.Event()
+            self.release_first = asyncio.Event()
+
+        async def send(self, chat_id, text, attachments=()):
+            if text == "first":
+                self.first_started.set()
+                await self.release_first.wait()
+            await super().send(chat_id, text, attachments)
+
+    transport = BlockingTransport()
+    forwarder = Forwarder(source_chat_id="source", target_chat_id="target", destination=transport)
+
+    def message(message_id, text):
+        return Message(
+            id=message_id,
+            chat_id="source",
+            sender_id="123",
+            sender_name="Alice",
+            text=text,
+        )
+
+    first_task = asyncio.create_task(forwarder.handle_message(message("shared", "first")))
+    await transport.first_started.wait()
+    second_task = asyncio.create_task(forwarder.handle_message(message("shared", "duplicate")))
+    third_task = asyncio.create_task(forwarder.handle_message(message("third", "second")))
+
+    await asyncio.wait_for(third_task, timeout=1)
+    transport.release_first.set()
+    await asyncio.wait_for(first_task, timeout=1)
+    await asyncio.wait_for(second_task, timeout=1)
+
+    assert {item["text"] for item in transport.sent} == {"first", "second"}
+    assert len(transport.sent) == 2
 
 
 @pytest.mark.asyncio

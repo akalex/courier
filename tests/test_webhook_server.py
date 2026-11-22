@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from courier.webhook_server import WebhookServer
+from courier.infrastructure.webhook_server import WebhookServer
 
 
 async def _request(server: WebhookServer, request: bytes) -> bytes:

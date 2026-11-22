@@ -34,8 +34,7 @@ transport: waha
 def test_forward_content_and_media_types_can_be_selected(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text(
-        "source_chat_id: source\ntarget_chat_id: target\n"
-        "forward_content: [media]\nmedia_types: [video]\n",
+        "source_chat_id: source\ntarget_chat_id: target\nforward_content: [media]\nmedia_types: [video]\n",
         encoding="utf-8",
     )
 
@@ -62,6 +61,7 @@ def test_invalid_forward_content_settings_fail_validation(tmp_path, setting, val
 
     with pytest.raises(ValueError, match=error):
         load_config(path)
+
 
 def test_matrix_destination_config_loads_and_requires_credentials(tmp_path, monkeypatch):
     path = tmp_path / "config.yaml"
@@ -165,8 +165,7 @@ def test_transport_setting_remains_a_legacy_default_for_source_and_destination(t
 def test_unsupported_destination_transport_fails_validation(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text(
-        "source_transport: waha\ndestination_transport: signal\n"
-        "source_chat_id: source\ntarget_chat_id: target\n",
+        "source_transport: waha\ndestination_transport: signal\nsource_chat_id: source\ntarget_chat_id: target\n",
         encoding="utf-8",
     )
 

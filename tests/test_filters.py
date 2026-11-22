@@ -1,8 +1,8 @@
 import pytest
 
 from courier.config import load_config
-from courier.domain import Message
-from courier.filters import AllOf, AnyOf, ExcludeKeywordFilter, KeywordFilter, SenderFilter
+from courier.core.domain import Message
+from courier.core.filters import AllOf, AnyOf, ExcludeKeywordFilter, KeywordFilter, SenderFilter
 from courier.main import build_filter_policy
 
 
