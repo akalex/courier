@@ -2,6 +2,12 @@
 
 Notable changes to Courier are documented here. This changelog follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use Semantic Versioning.
 
+## [0.6.1] - 2026-11-22
+
+### Fixed
+
+- Ask WAHA to redeliver a media-only message when its media download fails temporarily (a WAHA server error, request timeout, or connection failure) instead of silently dropping it. Routes that also forward text still send the text alone.
+
 ## [0.6.0] - 2026-11-22
 
 ### Fixed
