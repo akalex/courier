@@ -2,6 +2,23 @@
 
 Notable changes to Courier are documented here. This changelog follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use Semantic Versioning.
 
+## [0.6.0] - 2026-11-22
+
+### Fixed
+
+- Download WAHA media only for source-chat messages that pass the filters and can match the selected media types. Previously every container downloaded media for every message in every chat before discarding it.
+- Stop a media download once it exceeds `max_attachment_size` instead of downloading the whole file first.
+- Forward a second message that has no ID instead of dropping it as a duplicate.
+- Drop inline media whose base64 data cannot be decoded instead of forwarding an empty attachment.
+
+### Changed
+
+- Deduplicate in one place, the forwarder, instead of in both the WAHA adapter and the forwarder. Filtered messages no longer take up deduplication cache entries.
+- Register only the WAHA webhook events each container handles, and replace the event list on Courier's own webhook entry rather than merging into it. The `courier-health` container now subscribes only to `session.status`; forwarding routes with health alerts disabled no longer subscribe to it.
+- Refuse to start when `HEALTH_MONITOR_ONLY` is enabled but `HEALTH_ALERTS_ENABLED` is disabled.
+- Keep polling WAHA session health after an unexpected probe error instead of silently stopping.
+- Split the WAHA transport into a session client, a webhook ingress, and a core `SessionHealthMonitor`; health alert state now lives in core.
+
 ## [0.5.0] - 2026-11-22
 
 ### Changed
