@@ -3,28 +3,32 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
-from collections.abc import Callable
+from contextlib import AsyncExitStack
+from dataclasses import dataclass
+from functools import partial
 
-from .adapters import WAHATransport, build_matrix_destination, build_waha_transport
+from .adapters import WAHA, WAHAWebhookIngress, build_matrix_destination, build_waha
 from .config import AppConfig, load_config
-from .core.domain import Message
 from .core.filters import AllOf, AnyOf, ExcludeKeywordFilter, KeywordFilter, SenderFilter
 from .core.forwarder import Forwarder
-from .core.ports import Filter, MessageDestination, MessageSource
+from .core.health import SessionHealthMonitor
+from .core.ports import Filter, MessageDestination
 from .infrastructure.logging_context import CourierLogContextFilter
+from .infrastructure.webhook_server import WebhookServer
 
 
 logger = logging.getLogger(__name__)
 
-SOURCES: dict[str, Callable[[AppConfig], MessageSource]] = {
-    "waha": build_waha_transport,
-}
-DESTINATIONS: dict[str, Callable[[AppConfig], MessageDestination]] = {
-    "matrix": build_matrix_destination,
-    "waha": build_waha_transport,
-}
-
 FILTER_COMBINER = AnyOf
+
+
+@dataclass(frozen=True)
+class Route:
+    """One Courier process: where messages are sent, what handles webhooks, and optional health alerts."""
+
+    destination: MessageDestination
+    ingress: WAHAWebhookIngress
+    monitor: SessionHealthMonitor | None
 
 
 def _configure_logging(log_level: str) -> None:
@@ -35,27 +39,6 @@ def _configure_logging(log_level: str) -> None:
     for handler in logging.getLogger().handlers:
         handler.addFilter(CourierLogContextFilter())
     logging.getLogger("httpx").setLevel(logging.WARNING)
-
-
-def _build_route(config: AppConfig) -> tuple[MessageSource, MessageDestination]:
-    source_builder = SOURCES.get(config.source_transport)
-    if source_builder is None:
-        available = ", ".join(sorted(SOURCES))
-        raise ValueError(f"Unknown source transport '{config.source_transport}'. Available: {available}")
-    destination_builder = DESTINATIONS.get(config.destination_transport)
-    if destination_builder is None:
-        available = ", ".join(sorted(DESTINATIONS))
-        raise ValueError(f"Unknown destination transport '{config.destination_transport}'. Available: {available}")
-
-    source = source_builder(config)
-    destination: MessageDestination
-    if config.destination_transport == "waha":
-        if not isinstance(source, MessageDestination):
-            raise ValueError(f"Source transport '{config.source_transport}' cannot also be used as a WAHA destination")
-        destination = source
-    else:
-        destination = destination_builder(config)
-    return source, destination
 
 
 def build_filter_policy(config: AppConfig) -> Filter | None:
@@ -84,57 +67,43 @@ def build_filter_policy(config: AppConfig) -> Filter | None:
     return AllOf(allow_policy, exclude_policy)
 
 
-async def _ignore_message(message: Message) -> None:
-    logger.debug("Health monitor ignored message id=%s", message.id)
-
-
-async def _start_source(source: MessageSource, forwarder: Forwarder, *, health_monitor_only: bool) -> None:
-    message_handler = _ignore_message if health_monitor_only else forwarder.handle_message
-    await source.start(message_handler)
-
-
-async def _shutdown(
-    source: MessageSource,
-    destination: MessageDestination,
-    stop_event: asyncio.Event,
-) -> None:
-    """Stop route components and signal the server loop to exit cleanly.
+def build_route(config: AppConfig, waha: WAHA) -> Route:
+    """Wire the destination, forwarder, health monitor, and webhook ingress for the configured route.
 
     Args:
-        source: Messaging source to shut down.
-        destination: Messaging destination to shut down when it is a separate instance.
-        stop_event: Event set after the shutdown sequence completes.
-
-    Raises:
-        Exception: Any shutdown failure is propagated after attempting both components.
-    """
-    logger.info("Shutting down courier")
-    try:
-        if destination is not source:
-            try:
-                await destination.stop()
-            finally:
-                await source.stop()
-        else:
-            await source.stop()
-    finally:
-        stop_event.set()
-
-
-async def main() -> None:
-    """Run the Courier process with the configured transport and forwarding policy.
+        config: The validated application configuration.
+        waha: The WAHA session messages come from.
 
     Returns:
-        None.
-
-    Raises:
-        ValueError: If the transport name is unknown or required config values are missing.
-        KeyboardInterrupt: If the process is interrupted while running.
+        The route's components; the caller owns starting and stopping them.
     """
-    config = load_config()
-    _configure_logging(config.log_level)
+    destination: MessageDestination = (
+        waha.destination if config.destination_transport == "waha" else build_matrix_destination(config)
+    )
+    forwarder = None
+    if not config.health_monitor_only:
+        forwarder = Forwarder(
+            source_chat_id=config.source_chat_id,
+            target_chat_id=config.target_chat_id,
+            destination=destination,
+            filter_policy=build_filter_policy(config),
+            max_attachment_size=config.max_attachment_size,
+            forward_content=config.forward_content,
+            media_types=config.media_types,
+        )
+    monitor = None
+    if config.health_alerts_enabled:
+        monitor = SessionHealthMonitor(alerts=partial(destination.send, config.alert_chat_id), probe=waha.probe)
+    ingress = WAHAWebhookIngress(
+        waha,
+        include_from_me=config.include_from_me,
+        on_message=forwarder.handle_message if forwarder is not None else None,
+        on_status=monitor.observe if monitor is not None else None,
+    )
+    return Route(destination=destination, ingress=ingress, monitor=monitor)
 
-    source, destination = _build_route(config)
+
+def _log_filters(config: AppConfig) -> None:
     keywords = config.filters.keywords
     exclude_keywords = config.filters.exclude_keywords
     senders = config.filters.senders
@@ -148,50 +117,53 @@ async def main() -> None:
     else:
         logger.info("Message filters: none (all messages from the source chat are eligible)")
 
-    forwarder = Forwarder(
-        source_chat_id=config.source_chat_id,
-        target_chat_id=config.target_chat_id,
-        destination=destination,
-        filter_policy=build_filter_policy(config),
-        recent_ids=1000,
-        max_attachment_size=config.max_attachment_size,
-        forward_content=config.forward_content,
-        media_types=config.media_types,
-    )
 
-    stop_event = asyncio.Event()
-
-    if isinstance(source, WAHATransport) and config.health_alerts_enabled:
-        source.set_alert_handler(lambda text: destination.send(config.alert_chat_id, text))
-
-    async def _handle_signal() -> None:
-        await _shutdown(source, destination, stop_event)
-
+def _stop_on_signals(stop_event: asyncio.Event) -> None:
     loop = asyncio.get_running_loop()
     for signum in (signal.SIGINT, signal.SIGTERM):
         try:
-            loop.add_signal_handler(signum, lambda: asyncio.create_task(_handle_signal()))
+            loop.add_signal_handler(signum, stop_event.set)
         except NotImplementedError, AttributeError:
             pass
 
-    try:
-        await _start_source(source, forwarder, health_monitor_only=config.health_monitor_only)
-    except Exception:
-        if destination is not source:
-            try:
-                await destination.stop()
-            except Exception:
-                logger.exception("Failed to stop destination after source startup failure")
-        raise
-    logger.info(
-        "Courier started with source=%s/%s target=%s/%s include_from_me=%s",
-        config.source_transport,
-        config.source_chat_id,
-        config.destination_transport,
-        config.target_chat_id,
-        config.include_from_me,
-    )
-    await stop_event.wait()
+
+async def main() -> None:
+    """Run the Courier process with the configured route until SIGINT or SIGTERM.
+
+    Raises:
+        ValueError: If the configuration is invalid.
+        httpx.HTTPError: If the WAHA session cannot be configured.
+    """
+    config = load_config()
+    _configure_logging(config.log_level)
+    _log_filters(config)
+    stop_event = asyncio.Event()
+    _stop_on_signals(stop_event)
+
+    async with AsyncExitStack() as stack:
+        waha = build_waha(config)
+        stack.push_async_callback(waha.aclose)
+        route = build_route(config, waha)
+        stack.push_async_callback(route.destination.stop)
+        server = WebhookServer(host="0.0.0.0", port=config.listen_port, handler=route.ingress.handle)
+        await server.start()
+        stack.push_async_callback(server.stop)
+        await waha.provision(config.webhook_url, route.ingress.events)
+        if route.monitor is not None:
+            await route.monitor.start()
+            stack.push_async_callback(route.monitor.stop)
+
+        logger.info(
+            "Courier started with source=%s/%s target=%s/%s include_from_me=%s health_monitor_only=%s",
+            config.source_transport,
+            config.source_chat_id,
+            config.destination_transport,
+            config.target_chat_id,
+            config.include_from_me,
+            config.health_monitor_only,
+        )
+        await stop_event.wait()
+        logger.info("Shutting down courier")
 
 
 if __name__ == "__main__":

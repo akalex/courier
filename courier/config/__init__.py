@@ -315,6 +315,8 @@ def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
         _env_value("HEALTH_MONITOR_ONLY", raw.get("health_monitor_only", False)),
         name="health_monitor_only",
     )
+    if health_monitor_only and not health_alerts_enabled:
+        raise ValueError("HEALTH_MONITOR_ONLY requires HEALTH_ALERTS_ENABLED; otherwise the container does nothing")
     filters = FilterSettings(
         keywords=tuple(_coerce_list(filters_cfg.get("keywords"), name="filters.keywords")),
         exclude_keywords=tuple(_coerce_list(filters_cfg.get("exclude_keywords"), name="filters.exclude_keywords")),

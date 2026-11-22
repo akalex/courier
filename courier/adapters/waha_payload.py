@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
-from ..core.domain import Attachment, Message
+from ..core.domain import MediaRef, Message
+
+
+MediaRefFactory = Callable[[Any, str], MediaRef | None]
 
 
 def first(mapping: dict[str, Any], *keys: str) -> Any:
@@ -31,8 +35,9 @@ def normalize_sender(value: Any) -> str:
 
 
 class WAHAWebhookParser:
-    def __init__(self, *, include_from_me: bool) -> None:
+    def __init__(self, *, include_from_me: bool, media_ref: MediaRefFactory) -> None:
         self.include_from_me = include_from_me
+        self._media_ref = media_ref
 
     def message_from_payload(self, payload: Any) -> Message | None:
         if not isinstance(payload, dict):
@@ -84,19 +89,13 @@ class WAHAWebhookParser:
             event_data.get("conversation"),
         )
 
-        attachments: list[Attachment] = []
-        media = event_data.get("media")
-        if isinstance(media, dict):
-            mime_type = media.get("mimeType") or media.get("mimetype") or "application/octet-stream"
-            file_name = media.get("fileName") or media.get("filename") or "attachment"
-            attachments.append(Attachment(mime_type=mime_type, filename=file_name, data=b""))
-
         message_id = coalesce(event_data.get("id"), event_data.get("messageId"))
+        media = self._media_ref(event_data.get("media"), message_id)
         return Message(
             id=message_id,
             chat_id=chat_id,
             sender_id=sender_id,
             sender_name=sender_name,
             text=text,
-            attachments=tuple(attachments),
+            attachments=(media,) if media is not None else (),
         )

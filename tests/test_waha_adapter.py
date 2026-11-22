@@ -1,478 +1,281 @@
+import base64
 import json
-import logging
-from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 
 from courier import __version__
-from courier.adapters.waha import WAHATransport
-from courier.core.domain import Attachment, Message
-from courier.infrastructure.webhook_server import WebhookServer
+from courier.adapters.waha import WAHA, build_waha
+from courier.config import load_config
+from courier.core.domain import Attachment
+from courier.core.health import HealthObservation
 
 
-@pytest.mark.asyncio
-async def test_message_payload_mapping():
-    transport = WAHATransport(
-        session_name="demo",
-        base_url="http://waha",
-        api_key="secret",
-        webhook_url="http://bot/webhook",
-    )
-
-    payload = {
-        "event": "message",
-        "session": "demo",
-        "payload": {
-            "id": "msg-1",
-            "chatId": "group-1@c.us",
-            "fromMe": False,
-            "participant": "1234567890@c.us",
-            "body": "urgent please",
-            "hasMedia": True,
-            "media": {
-                "mimeType": "image/jpeg",
-                "fileName": "photo.jpg",
-                "url": "http://example.com/file.jpg",
-            },
-            "senderName": "Alice",
-        },
-    }
-
-    message = transport._message_from_payload(payload)
-    assert message.id == "msg-1"
-    assert message.chat_id == "group-1@c.us"
-    assert message.sender_id == "1234567890"
-    assert message.sender_name == "Alice"
-    assert message.text == "urgent please"
-    assert message.attachments[0].mime_type == "image/jpeg"
+def _waha(handler, *, session_name="demo", sleep=None):
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://waha:3000")
+    kwargs = {"sleep": sleep} if sleep is not None else {}
+    return WAHA(base_url="http://waha:3000", session_name=session_name, http=http, **kwargs)
 
 
-def test_messages_from_linked_account_are_opt_in():
-    payload = {
-        "event": "message",
-        "payload": {
-            "id": "msg-self",
-            "chatId": "group-1@g.us",
-            "fromMe": True,
-            "body": "sent by linked account",
-        },
-    }
-    default_transport = WAHATransport(
-        session_name="demo",
-        base_url="http://waha",
-        api_key="secret",
-        webhook_url="http://bot/webhook",
-    )
-    enabled_transport = WAHATransport(
-        session_name="demo",
-        base_url="http://waha",
-        api_key="secret",
-        webhook_url="http://bot/webhook",
-        include_from_me=True,
-    )
+class RecordingSleep:
+    def __init__(self):
+        self.delays = []
 
-    assert default_transport._message_from_payload(payload) is None
-    message = enabled_transport._message_from_payload(payload)
-    assert message is not None
-    assert message.id == "msg-self"
-    assert message.chat_id == "group-1@g.us"
+    async def __call__(self, seconds):
+        self.delays.append(seconds)
 
 
-def test_message_any_from_linked_account_uses_recipient_chat_id():
-    transport = WAHATransport(
-        session_name="demo",
-        base_url="http://waha",
-        api_key="secret",
-        webhook_url="http://bot/webhook",
-        include_from_me=True,
-    )
-
-    message = transport._message_from_payload(
-        {
-            "event": "message.any",
-            "payload": {
-                "id": "msg-self",
-                "from": "linked-account@c.us",
-                "to": "group-1@g.us",
-                "fromMe": True,
-                "body": "sent by linked account",
-            },
-        }
-    )
-
-    assert message is not None
-    assert message.chat_id == "group-1@g.us"
-    assert message.text == "sent by linked account"
+# --- sending -----------------------------------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_send_builds_expected_request_body():
-    transport = WAHATransport(
-        session_name="demo",
-        base_url="http://waha",
-        api_key="secret",
-        webhook_url="http://bot/webhook",
-    )
-    transport.session = AsyncMock()
-    transport.session.post.return_value = httpx.Response(
-        200,
-        request=httpx.Request("POST", "http://waha/api/sendImage"),
-    )
+async def test_send_text_posts_message_to_waha_session():
+    requests = []
 
-    await transport.send("1234567890@c.us", "hello", attachments=(Attachment("image/png", "x.png", b"123"),))
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(201, request=request)
 
-    transport.session.post.assert_called_once()
-    args, kwargs = transport.session.post.call_args
-    assert args[0].endswith("/sendImage")
-    assert kwargs["json"]["chatId"] == "1234567890@c.us"
-    assert kwargs["json"]["caption"] == "hello"
+    waha = _waha(handler)
+    await waha.destination.send("target@g.us", "hello")
+
+    assert [(request.url.path, json.loads(request.content)) for request in requests] == [
+        ("/api/sendText", {"session": "demo", "chatId": "target@g.us", "text": "hello"}),
+    ]
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("mime_type", "expected_endpoint"),
-    [
-        ("image/jpeg", "/api/sendImage"),
-        ("video/mp4", "/api/sendVideo"),
-        ("application/pdf", "/api/sendFile"),
-    ],
+    [("image/jpeg", "/api/sendImage"), ("video/mp4", "/api/sendVideo"), ("application/pdf", "/api/sendFile")],
 )
 async def test_send_uses_media_specific_waha_endpoint(mime_type, expected_endpoint):
-    transport = WAHATransport(
-        session_name="demo",
-        base_url="http://waha",
-        api_key="secret",
-        webhook_url="http://bot/webhook",
-    )
-    transport.session = AsyncMock()
-    transport.session.post.return_value = httpx.Response(
-        200,
-        request=httpx.Request("POST", f"http://waha{expected_endpoint}"),
-    )
+    requests = []
 
-    await transport.send("target@g.us", "caption", attachments=(Attachment(mime_type, "media", b"data"),))
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(201, request=request)
 
-    assert transport.session.post.call_args.args[0] == expected_endpoint
+    waha = _waha(handler)
+    await waha.destination.send("target@g.us", "caption", (Attachment(mime_type, "media", b"data"),))
 
-
-@pytest.mark.asyncio
-async def test_send_infers_mp4_mime_type_for_inline_video():
-    transport = WAHATransport(
-        session_name="demo",
-        base_url="http://waha",
-        api_key="secret",
-        webhook_url="http://bot/webhook",
-    )
-    transport.session = AsyncMock()
-    transport.session.post.return_value = httpx.Response(
-        200,
-        request=httpx.Request("POST", "http://waha/api/sendVideo"),
-    )
-
-    await transport.send(
-        "target@g.us",
-        "caption",
-        attachments=(Attachment("application/octet-stream", "clip.mp4", b"video-data"),),
-    )
-
-    args, kwargs = transport.session.post.call_args
-    assert args[0] == "/api/sendVideo"
-    assert kwargs["json"]["file"]["mimetype"] == "video/mp4"
-    assert kwargs["json"]["file"]["data"] == "dmlkZW8tZGF0YQ=="
+    assert len(requests) == 1
+    assert requests[0].url.path == expected_endpoint
+    assert json.loads(requests[0].content) == {
+        "session": "demo",
+        "chatId": "target@g.us",
+        "caption": "caption",
+        "file": {"mimetype": mime_type, "filename": "media", "data": "ZGF0YQ=="},
+    }
 
 
-@pytest.mark.asyncio
-async def test_send_infers_mp4_mime_type_from_content_when_filename_is_generic():
-    transport = WAHATransport(
-        session_name="demo",
-        base_url="http://waha",
-        api_key="secret",
-        webhook_url="http://bot/webhook",
-    )
-    transport.session = AsyncMock()
-    transport.session.post.return_value = httpx.Response(
-        200,
-        request=httpx.Request("POST", "http://waha/api/sendVideo"),
-    )
-    mp4_data = b"\x00\x00\x00\x18ftypisom"
+@pytest.mark.parametrize(
+    ("filename", "data"),
+    [("clip.mp4", b"video-data"), ("attachment", b"\x00\x00\x00\x18ftypisom")],
+)
+async def test_send_infers_mp4_mime_type_for_generic_binary_video(filename, data):
+    requests = []
 
-    await transport.send(
-        "target@g.us",
-        "caption",
-        attachments=(Attachment("application/octet-stream", "attachment", mp4_data),),
-    )
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(201, request=request)
 
-    args, kwargs = transport.session.post.call_args
-    assert args[0] == "/api/sendVideo"
-    assert kwargs["json"]["file"]["mimetype"] == "video/mp4"
+    waha = _waha(handler)
+    await waha.destination.send("target@g.us", "", (Attachment("application/octet-stream", filename, data),))
+
+    assert requests[0].url.path == "/api/sendVideo"
+    assert json.loads(requests[0].content)["file"]["mimetype"] == "video/mp4"
 
 
-@pytest.mark.asyncio
 async def test_send_video_falls_back_to_file_when_waha_lacks_chrome(caplog):
-    transport = WAHATransport(
-        session_name="demo",
-        base_url="http://waha",
-        api_key="secret",
-        webhook_url="http://bot/webhook",
-    )
-    video_response = httpx.Response(
-        422,
-        json={
-            "message": 'Use "devlikeapro/waha:chrome" docker image to send video in WEBJS',
-            "error": "Unprocessable Entity",
-            "statusCode": 422,
-        },
-        request=httpx.Request("POST", "http://waha/api/sendVideo"),
-    )
-    file_response = httpx.Response(
-        200,
-        request=httpx.Request("POST", "http://waha/api/sendFile"),
-    )
-    transport.session = AsyncMock()
-    transport.session.post.side_effect = [video_response, file_response]
+    requests = []
 
-    await transport.send("target@g.us", "caption", attachments=(Attachment("video/mp4", "clip.mp4", b"video"),))
+    def handler(request):
+        requests.append(request.url.path)
+        if request.url.path == "/api/sendVideo":
+            return httpx.Response(
+                422,
+                json={"message": 'Use "devlikeapro/waha:chrome" docker image to send video in WEBJS'},
+                request=request,
+            )
+        return httpx.Response(201, request=request)
 
-    assert [call.args[0] for call in transport.session.post.call_args_list] == [
-        "/api/sendVideo",
-        "/api/sendFile",
-    ]
+    waha = _waha(handler)
+    await waha.destination.send("target@g.us", "caption", (Attachment("video/mp4", "clip.mp4", b"video"),))
+
+    assert requests == ["/api/sendVideo", "/api/sendFile"]
     assert "forwarding as a file" in caplog.text
 
 
-@pytest.mark.asyncio
-async def test_send_logs_waha_error_response(caplog):
-    transport = WAHATransport(
-        session_name="demo",
-        base_url="http://waha",
-        api_key="secret",
-        webhook_url="http://bot/webhook",
-    )
-    transport.session = AsyncMock()
-    transport.session.post.return_value = httpx.Response(
-        422,
-        json={"message": ["file.data must be base64 encoded"]},
-        request=httpx.Request("POST", "http://waha/api/sendText"),
-    )
+async def test_send_raises_and_logs_waha_error_response(caplog):
+    def handler(request):
+        return httpx.Response(422, json={"message": ["file.data must be base64 encoded"]}, request=request)
 
+    waha = _waha(handler)
     with pytest.raises(httpx.HTTPStatusError):
-        await transport.send("1234567890@c.us", "hello")
+        await waha.destination.send("target@g.us", "hello")
+
     assert "file.data must be base64 encoded" in caplog.text
 
 
-@pytest.mark.asyncio
-async def test_hydrate_media_rewrites_localhost_url_to_waha_service():
-    requested_urls = []
+# --- session health probe ----------------------------------------------------------------------------------------
 
-    async def handler(request):
-        requested_urls.append(str(request.url))
+
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        (
+            httpx.Response(200, json={"name": "demo", "status": "WORKING"}),
+            HealthObservation(None, "Recovery update: WAHA session demo and worker are back online."),
+        ),
+        (
+            httpx.Response(200, json={"name": "demo", "status": "SCAN_QR"}),
+            HealthObservation("session:unhealthy", "WAHA session demo is SCAN_QR."),
+        ),
+        (httpx.Response(200, json={"name": "demo", "status": "STARTING"}), None),
+        (
+            httpx.Response(404),
+            HealthObservation("session:missing", "WAHA session demo no longer exists (HTTP 404)."),
+        ),
+        (
+            httpx.Response(503),
+            HealthObservation(
+                "worker:unavailable",
+                "WAHA worker returned HTTP 503 while checking session demo.",
+            ),
+        ),
+        (
+            httpx.Response(401),
+            HealthObservation("api:http-401", "WAHA health check for session demo returned HTTP 401."),
+        ),
+        (
+            httpx.Response(200, json=["not", "a", "session"]),
+            HealthObservation(
+                "api:invalid-response",
+                "WAHA returned an invalid health response for session demo.",
+            ),
+        ),
+    ],
+)
+async def test_probe_maps_waha_session_responses_to_health_observations(response, expected):
+    paths = []
+
+    def handler(request):
+        paths.append(request.url.path)
+        return response
+
+    waha = _waha(handler)
+
+    assert await waha.probe.check() == expected
+    assert paths == ["/api/sessions/demo"]
+
+
+async def test_probe_reports_unreachable_worker():
+    def handler(request):
+        raise httpx.ConnectError("connection refused", request=request)
+
+    waha = _waha(handler)
+
+    assert await waha.probe.check() == HealthObservation(
+        "worker:unavailable",
+        "WAHA worker is unavailable while checking session demo.",
+    )
+
+
+# --- media -------------------------------------------------------------------------------------------------------
+
+
+async def test_media_download_rewrites_localhost_url_to_waha_origin():
+    requested = []
+
+    def handler(request):
+        requested.append(str(request.url))
         return httpx.Response(200, content=b"video-data")
 
-    transport = WAHATransport(
-        session_name="default",
-        base_url="http://waha:3000",
-        api_key="secret",
-        webhook_url="http://courier:8000/webhook",
+    waha = _waha(handler)
+    media = waha.media.media_ref(
+        {"url": "http://localhost:3000/api/files/demo/m1.mp4", "mimetype": "video/mp4", "filename": "m1.mp4"},
+        "m1",
     )
-    message = transport._message_from_payload(
-        {
-            "event": "message",
-            "payload": {
-                "id": "message-1",
-                "chatId": "group@g.us",
-                "fromMe": False,
-                "body": "video caption",
-                "media": {"url": "http://localhost:3000/api/files/default/message-1.mp4"},
-            },
-        }
-    )
-    assert message is not None
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        transport.session = client
-        hydrated = await transport._hydrate_media(
-            message,
-            {"media": {"url": "http://localhost:3000/api/files/default/message-1.mp4"}},
-        )
-
-    assert requested_urls == ["http://waha:3000/api/files/default/message-1.mp4"]
-    assert hydrated.text == "video caption"
-    assert hydrated.attachments[0].data == b"video-data"
+    assert media is not None
+    assert (media.mime_type, media.filename) == ("video/mp4", "m1.mp4")
+    assert requested == []
+    assert await media.fetch(max_bytes=1024) == b"video-data"
+    assert requested == ["http://waha:3000/api/files/demo/m1.mp4"]
 
 
-@pytest.mark.asyncio
-async def test_hydrate_media_failure_keeps_text_without_empty_attachment():
-    async def handler(request):
-        return httpx.Response(404, request=request)
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://attacker.example/media.mp4",
+        "http://attacker.example:3000/api/files/demo/m1.mp4",
+        "http://waha:8080/api/files/demo/m1.mp4",
+        "http://user:pass@waha:3000/api/files/demo/m1.mp4",
+    ],
+)
+async def test_media_from_outside_waha_origin_is_never_requested(url):
+    requested = []
 
-    transport = WAHATransport(
-        session_name="default",
-        base_url="http://waha:3000",
-        api_key="secret",
-        webhook_url="http://courier:8000/webhook",
-    )
-    message = transport._message_from_payload(
-        {
-            "event": "message",
-            "payload": {
-                "id": "message-2",
-                "chatId": "group@g.us",
-                "fromMe": False,
-                "body": "plain text",
-                "media": {"url": "http://localhost:3000/api/files/default/message-2.mp4"},
-            },
-        }
-    )
-    assert message is not None
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        transport.session = client
-        hydrated = await transport._hydrate_media(
-            message,
-            {"media": {"url": "http://localhost:3000/api/files/default/message-2.mp4"}},
-        )
-
-    assert hydrated.text == "plain text"
-    assert hydrated.attachments == ()
-
-
-@pytest.mark.asyncio
-async def test_hydrate_media_rejects_external_origin_without_request():
-    requested_urls = []
-
-    async def handler(request):
-        requested_urls.append(str(request.url))
+    def handler(request):
+        requested.append(str(request.url))
         return httpx.Response(200, content=b"video-data")
 
-    transport = WAHATransport(
-        session_name="default",
-        base_url="http://waha:3000",
-        api_key="secret",
-        webhook_url="http://courier:8000/webhook",
-    )
-    message = Message(
-        id="message-external",
-        chat_id="group@g.us",
-        sender_id="sender",
-        sender_name="Sender",
-        text="caption",
-        attachments=(),
-    )
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        transport.session = client
-        hydrated = await transport._hydrate_media(
-            message,
-            {"media": {"url": "https://attacker.example/media.mp4"}},
-        )
+    waha = _waha(handler)
+    media = waha.media.media_ref({"url": url}, "m1")
 
-    assert requested_urls == []
-    assert hydrated.text == "caption"
-    assert hydrated.attachments == ()
+    assert media is not None
+    assert await media.fetch(max_bytes=1024) is None
+    assert requested == []
 
 
-@pytest.mark.asyncio
-async def test_duplicate_webhook_skips_media_hydration():
-    requested_urls = []
+@pytest.mark.parametrize("response", [httpx.Response(404), httpx.Response(200, content=b"")])
+async def test_failed_or_empty_media_download_is_unavailable(response):
+    waha = _waha(lambda request: response)
+    media = waha.media.media_ref({"url": "/api/files/demo/m1.jpg"}, "m1")
 
-    async def handler(request):
-        requested_urls.append(str(request.url))
-        return httpx.Response(200, content=b"video-data")
-
-    transport = WAHATransport(
-        session_name="default",
-        base_url="http://waha:3000",
-        api_key="secret",
-        webhook_url="http://courier:8000/webhook",
-    )
-    transport._on_message = AsyncMock()
-    payload = {
-        "event": "message",
-        "id": "event-1",
-        "payload": {
-            "id": "message-1",
-            "chatId": "group@g.us",
-            "fromMe": False,
-            "body": "video caption",
-            "media": {"url": "http://waha:3000/api/files/default/message-1.mp4"},
-        },
-    }
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        transport.session = client
-        await transport._handle_webhook(payload)
-        await transport._handle_webhook({**payload, "event": "message.any", "id": "event-2"})
-
-    assert requested_urls == ["http://waha:3000/api/files/default/message-1.mp4"]
-    transport._on_message.assert_awaited_once()
+    assert await media.fetch(max_bytes=1024) is None
 
 
-@pytest.mark.asyncio
-async def test_hydrate_media_absent_keeps_text_without_attachment():
-    transport = WAHATransport(
-        session_name="default",
-        base_url="http://waha:3000",
-        api_key="secret",
-        webhook_url="http://courier:8000/webhook",
-    )
-    message = transport._message_from_payload(
-        {
-            "event": "message",
-            "payload": {
-                "id": "message-3",
-                "chatId": "group@g.us",
-                "fromMe": False,
-                "body": "plain text",
-                "media": {},
-            },
-        }
-    )
-    assert message is not None
+async def test_media_larger_than_limit_is_unavailable():
+    waha = _waha(lambda request: httpx.Response(200, content=b"12345"))
+    media = waha.media.media_ref({"url": "/api/files/demo/m1.jpg"}, "m1")
 
-    hydrated = await transport._hydrate_media(message, {"media": {}})
-
-    assert hydrated.text == "plain text"
-    assert hydrated.attachments == ()
+    assert await media.fetch(max_bytes=4) is None
+    assert await media.fetch(max_bytes=5) == b"12345"
 
 
-@pytest.mark.asyncio
-async def test_start_sets_api_key_header_and_configures_session(monkeypatch):
-    captured = {}
+async def test_inline_base64_media_is_available_without_request():
+    requested = []
 
-    class DummyAsyncClient:
-        is_closed = False
+    def handler(request):
+        requested.append(request)
+        return httpx.Response(500)
 
-        def __init__(self, **kwargs):
-            captured["headers"] = kwargs["headers"]
-
-        async def aclose(self):
-            pass
-
-    configure_session = AsyncMock()
-    monkeypatch.setattr(httpx, "AsyncClient", DummyAsyncClient)
-    monkeypatch.setattr(WebhookServer, "start", AsyncMock())
-    monkeypatch.setattr(WAHATransport, "_ensure_waha_session", configure_session)
-
-    transport = WAHATransport(
-        session_name="demo",
-        base_url="http://waha",
-        api_key="secret",
-        webhook_url="http://bot/webhook",
+    waha = _waha(handler)
+    media = waha.media.media_ref(
+        {"data": base64.b64encode(b"image-bytes").decode(), "mimeType": "image/png", "fileName": "x.png"},
+        "m1",
     )
 
-    await transport.start(lambda message: None)
+    assert media is not None
+    assert (media.mime_type, media.filename) == ("image/png", "x.png")
+    assert await media.fetch(max_bytes=1024) == b"image-bytes"
+    assert requested == []
 
-    assert captured["headers"]["X-Api-Key"] == "secret"
-    assert captured["headers"]["User-Agent"] == f"courier/{__version__}"
-    configure_session.assert_awaited_once()
+
+@pytest.mark.parametrize("media", [None, {}, {"mimetype": "image/jpeg"}, {"data": "%%% not base64 %%%"}])
+async def test_media_without_retrievable_content_has_no_reference(media):
+    waha = _waha(lambda request: httpx.Response(500))
+
+    assert waha.media.media_ref(media, "m1") is None
 
 
-@pytest.mark.asyncio
-async def test_ensure_waha_session_configures_existing_session():
-    requests = []
+# --- session provisioning ----------------------------------------------------------------------------------------
 
-    async def handler(request):
-        requests.append(request)
+
+async def test_provision_sets_exactly_the_requested_events_on_its_own_webhook():
+    puts = []
+
+    def handler(request):
         if request.method == "GET":
             return httpx.Response(
                 200,
@@ -482,84 +285,75 @@ async def test_ensure_waha_session_configures_existing_session():
                     "config": {
                         "webhooks": [
                             {"url": "http://courier:8000/webhook", "events": ["session.status"]},
+                            {
+                                "url": "http://courier-health:8000/webhook",
+                                "events": ["message", "message.any", "session.status"],
+                                "retries": {"policy": "linear", "delaySeconds": 5, "attempts": 3},
+                            },
                             {"url": "http://other/webhook", "events": ["message"]},
-                        ]
+                        ],
                     },
                 },
             )
+        puts.append(json.loads(request.content))
+        return httpx.Response(200, json={"name": "demo"})
+
+    waha = _waha(handler)
+    await waha.provision("http://courier-health:8000/webhook", ("session.status",))
+
+    assert puts == [
+        {
+            "name": "demo",
+            "config": {
+                "webhooks": [
+                    {
+                        "url": "http://courier-health:8000/webhook",
+                        "events": ["session.status"],
+                        "retries": {"policy": "linear", "delaySeconds": 5, "attempts": 3},
+                    },
+                    {"url": "http://other/webhook", "events": ["message"]},
+                ],
+            },
+        },
+    ]
+
+
+async def test_provision_adds_its_webhook_with_default_retries_and_starts_stopped_session():
+    requests = []
+
+    def handler(request):
+        requests.append((request.method, request.url.path))
+        if request.method == "GET":
+            return httpx.Response(200, json={"name": "demo", "status": "STOPPED", "config": {}})
         if request.method == "PUT":
-            assert request.url.path == "/api/sessions/demo"
-            config = json.loads(request.content)["config"]
-            assert config["webhooks"] == [
-                {"url": "http://other/webhook", "events": ["message"]},
+            assert json.loads(request.content)["config"]["webhooks"] == [
                 {
-                    "url": "http://courier-aircraft-losses:8000/webhook",
-                    "events": ["message", "message.any", "session.status"],
+                    "url": "http://courier-tfl:8000/webhook",
+                    "events": ["message", "message.any"],
                     "retries": {"policy": "exponential", "delaySeconds": 2, "attempts": 10},
                 },
             ]
-            return httpx.Response(200, json={"name": "demo"})
-        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+        return httpx.Response(200, json={"name": "demo"})
 
-    transport = WAHATransport(
-        session_name="demo",
-        base_url="http://waha",
-        api_key="secret",
-        webhook_url="http://courier-aircraft-losses:8000/webhook",
-    )
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://waha") as client:
-        transport.session = client
-        await transport._ensure_waha_session()
+    waha = _waha(handler)
+    await waha.provision("http://courier-tfl:8000/webhook", ("message", "message.any"))
 
-    assert [request.method for request in requests] == ["GET", "PUT"]
+    assert requests == [
+        ("GET", "/api/sessions/demo"),
+        ("PUT", "/api/sessions/demo"),
+        ("POST", "/api/sessions/demo/start"),
+    ]
 
 
-@pytest.mark.asyncio
-async def test_ensure_waha_session_retries_request_timeout(monkeypatch):
+async def test_provision_creates_and_starts_missing_session():
     requests = []
 
-    async def handler(request):
-        requests.append(request)
-        if request.method == "GET":
-            return httpx.Response(
-                200,
-                json={
-                    "name": "demo",
-                    "status": "WORKING",
-                    "config": {"webhooks": []},
-                },
-            )
-        if request.method == "PUT":
-            if sum(item.method == "PUT" for item in requests) == 1:
-                return httpx.Response(408)
-            return httpx.Response(200, json={"name": "demo"})
-        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
-
-    monkeypatch.setattr("courier.adapters.waha.SESSION_SETUP_RETRY_DELAY_SECONDS", 0)
-    transport = WAHATransport(
-        session_name="demo",
-        base_url="http://waha",
-        api_key="secret",
-        webhook_url="http://courier:8000/webhook",
-    )
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://waha") as client:
-        transport.session = client
-        await transport._ensure_waha_session()
-
-    assert [request.method for request in requests] == ["GET", "PUT", "GET", "PUT"]
-
-
-@pytest.mark.asyncio
-async def test_ensure_waha_session_creates_and_starts_missing_session():
-    requests = []
-
-    async def handler(request):
-        requests.append(request)
+    def handler(request):
+        requests.append((request.method, request.url.path))
         if request.method == "GET":
             return httpx.Response(404)
-        if request.method == "POST" and request.url.path == "/api/sessions/":
-            body = json.loads(request.content)
-            assert body == {
+        if request.url.path == "/api/sessions/":
+            assert json.loads(request.content) == {
                 "name": "demo",
                 "config": {
                     "webhooks": [
@@ -567,125 +361,86 @@ async def test_ensure_waha_session_creates_and_starts_missing_session():
                             "url": "http://courier:8000/webhook",
                             "events": ["message", "message.any", "session.status"],
                             "retries": {"policy": "exponential", "delaySeconds": 2, "attempts": 10},
-                        }
-                    ]
+                        },
+                    ],
                 },
             }
             return httpx.Response(201, json={"name": "demo"})
-        if request.method == "POST" and request.url.path == "/api/sessions/demo/start":
-            return httpx.Response(200, json={"name": "demo", "status": "SCAN_QR"})
-        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+        return httpx.Response(200, json={"name": "demo", "status": "SCAN_QR"})
 
-    transport = WAHATransport(
-        session_name="demo",
-        base_url="http://waha",
-        api_key="secret",
-        webhook_url="http://courier:8000/webhook",
-    )
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://waha") as client:
-        transport.session = client
-        await transport._ensure_waha_session()
+    waha = _waha(handler)
+    await waha.provision("http://courier:8000/webhook", ("message", "message.any", "session.status"))
 
-    assert [request.url.path for request in requests] == [
-        "/api/sessions/demo",
-        "/api/sessions/",
-        "/api/sessions/demo/start",
+    assert requests == [
+        ("GET", "/api/sessions/demo"),
+        ("POST", "/api/sessions/"),
+        ("POST", "/api/sessions/demo/start"),
     ]
 
 
-@pytest.mark.asyncio
-async def test_dispatches_message_from_webhook_payload(caplog):
-    caplog.set_level(logging.INFO, logger="courier.adapters.waha")
-    transport = WAHATransport(
-        session_name="demo",
-        base_url="http://waha",
-        api_key="secret",
-        webhook_url="http://bot/webhook",
+async def test_provision_retries_request_timeout_after_a_delay():
+    requests = []
+
+    def handler(request):
+        requests.append(request.method)
+        if request.method == "GET":
+            return httpx.Response(200, json={"name": "demo", "status": "WORKING", "config": {"webhooks": []}})
+        if requests.count("PUT") == 1:
+            return httpx.Response(408)
+        return httpx.Response(200, json={"name": "demo"})
+
+    sleep = RecordingSleep()
+    waha = _waha(handler, sleep=sleep)
+    await waha.provision("http://courier:8000/webhook", ("message", "message.any"))
+
+    assert requests == ["GET", "PUT", "GET", "PUT"]
+    assert sleep.delays == [5]
+
+
+async def test_provision_does_not_retry_client_errors():
+    requests = []
+
+    def handler(request):
+        requests.append(request.method)
+        return httpx.Response(401)
+
+    sleep = RecordingSleep()
+    waha = _waha(handler, sleep=sleep)
+    with pytest.raises(httpx.HTTPStatusError):
+        await waha.provision("http://courier:8000/webhook", ("message",))
+
+    assert requests == ["GET"]
+    assert sleep.delays == []
+
+
+# --- construction from config ------------------------------------------------------------------------------------
+
+
+async def test_build_waha_identifies_courier_and_authenticates_with_api_key(tmp_path, monkeypatch):
+    for name in ("WAHA_URL", "WAHA_API_KEY", "WAHA_SESSION"):
+        monkeypatch.delenv(name, raising=False)
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """
+source_chat_id: source@g.us
+target_chat_id: target@g.us
+waha:
+  url: http://waha:3000
+  api_key: secret
+  session: demo
+""".strip(),
+        encoding="utf-8",
     )
-    transport._on_message = AsyncMock()
+    requests = []
 
-    payload = {
-        "event": "message",
-        "id": "evt-2",
-        "session": "demo",
-        "_courier_webhook": {"request_id": "wh_123"},
-        "payload": {
-            "id": "msg-2",
-            "chatId": "group-1@c.us",
-            "fromMe": False,
-            "participant": "1234567890@c.us",
-            "body": "hello from webhook",
-            "senderName": "Bob",
-        },
-    }
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(201, request=request)
 
-    await transport._handle_webhook(payload)
+    waha = build_waha(load_config(path), transport=httpx.MockTransport(handler))
+    await waha.destination.send("target@g.us", "hello")
+    await waha.aclose()
 
-    transport._on_message.assert_awaited_once()
-    assert transport._on_message.await_args.args[0].id == "msg-2"
-    assert "event=message event_id=evt-2 request_id=wh_123 message_id=msg-2 chat_id=group-1@c.us" in caplog.text
-
-
-@pytest.mark.asyncio
-async def test_session_status_webhook_alerts_once_until_recovery():
-    transport = WAHATransport(
-        session_name="demo",
-        base_url="http://waha",
-        api_key="secret",
-        webhook_url="http://bot/webhook",
-    )
-    transport._alert_handler = AsyncMock()
-
-    stopped = {"event": "session.status", "session": "demo", "payload": {"status": "STOPPED"}}
-    await transport._handle_webhook(stopped)
-    await transport._handle_webhook(stopped)
-    await transport._handle_webhook({"event": "session.status", "session": "demo", "payload": {"status": "WORKING"}})
-
-    assert [call.args[0] for call in transport._alert_handler.await_args_list] == [
-        "[Courier Bot] WAHA session demo is STOPPED.",
-        "[Courier Bot] Recovery update: WAHA session demo and worker are back online.",
-    ]
-
-
-@pytest.mark.asyncio
-async def test_health_check_notifies_when_waha_worker_is_unavailable_and_recovers():
-    responses = [httpx.Response(503), httpx.Response(200, json={"status": "WORKING"})]
-
-    async def handler(request):
-        return responses.pop(0)
-
-    transport = WAHATransport(
-        session_name="demo",
-        base_url="http://waha",
-        api_key="secret",
-        webhook_url="http://bot/webhook",
-    )
-    transport._alert_handler = AsyncMock()
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://waha") as client:
-        transport.session = client
-        await transport._check_session_health()
-        await transport._check_session_health()
-
-    assert [call.args[0] for call in transport._alert_handler.await_args_list] == [
-        "[Courier Bot] WAHA worker returned HTTP 503 while checking session demo.",
-        "[Courier Bot] Recovery update: WAHA session demo and worker are back online.",
-    ]
-
-
-@pytest.mark.asyncio
-async def test_health_check_reports_missing_session_separately_from_worker_failure():
-    async def handler(request):
-        return httpx.Response(404, request=request)
-
-    transport = WAHATransport(
-        session_name="demo",
-        base_url="http://waha",
-        api_key="secret",
-        webhook_url="http://bot/webhook",
-    )
-    transport._alert_handler = AsyncMock()
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://waha") as client:
-        transport.session = client
-        await transport._check_session_health()
-
-    transport._alert_handler.assert_awaited_once_with("[Courier Bot] WAHA session demo no longer exists (HTTP 404).")
+    assert str(requests[0].url) == "http://waha:3000/api/sendText"
+    assert requests[0].headers["X-Api-Key"] == "secret"
+    assert requests[0].headers["User-Agent"] == f"courier/{__version__}"

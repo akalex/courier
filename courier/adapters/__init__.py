@@ -1,5 +1,6 @@
 from .matrix import MatrixDestination, build_matrix_destination
-from .waha import WAHATransport, build_waha_transport
+from .waha import WAHA, build_waha
+from .waha_ingress import WAHAWebhookIngress
 
 
-__all__ = ["MatrixDestination", "WAHATransport", "build_matrix_destination", "build_waha_transport"]
+__all__ = ["WAHA", "MatrixDestination", "WAHAWebhookIngress", "build_matrix_destination", "build_waha"]

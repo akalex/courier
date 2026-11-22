@@ -11,14 +11,39 @@ class FakeTransport:
     def __init__(self):
         self.sent = []
 
-    async def start(self, on_message):
-        self.on_message = on_message
-
     async def send(self, chat_id, text, attachments=()):
         self.sent.append({"chat_id": chat_id, "text": text, "attachments": attachments})
 
     async def stop(self):
         pass
+
+
+class RecordingMedia:
+    """Lazy media whose fetch yields to the event loop like a real download."""
+
+    def __init__(self, mime_type, filename, data):
+        self.mime_type = mime_type
+        self.filename = filename
+        self._data = data
+        self.fetch_limits = []
+
+    async def fetch(self, *, max_bytes):
+        self.fetch_limits.append(max_bytes)
+        await asyncio.sleep(0)
+        if self._data is None or len(self._data) > max_bytes:
+            return None
+        return self._data
+
+
+def _message(message_id, *, chat_id="source", text="", attachments=()):
+    return Message(
+        id=message_id,
+        chat_id=chat_id,
+        sender_id="123",
+        sender_name="Alice",
+        text=text,
+        attachments=attachments,
+    )
 
 
 @pytest.mark.asyncio
@@ -279,3 +304,201 @@ async def test_forwarder_can_select_text_without_attachments():
 
     assert transport.sent[0]["text"] == "hello"
     assert transport.sent[0]["attachments"] == ()
+
+
+@pytest.mark.asyncio
+async def test_forwarder_does_not_fetch_media_for_other_chats_or_filtered_messages():
+    transport = FakeTransport()
+    forwarder = Forwarder(
+        source_chat_id="source",
+        target_chat_id="target",
+        destination=transport,
+        filter_policy=KeywordFilter(["urgent"]),
+    )
+    other_chat_media = RecordingMedia("image/jpeg", "a.jpg", b"jpeg")
+    filtered_media = RecordingMedia("image/jpeg", "b.jpg", b"jpeg")
+
+    await forwarder.handle_message(
+        _message("other", chat_id="other", text="urgent", attachments=(other_chat_media,)),
+    )
+    await forwarder.handle_message(_message("boring", text="boring", attachments=(filtered_media,)))
+
+    assert other_chat_media.fetch_limits == []
+    assert filtered_media.fetch_limits == []
+    assert transport.sent == []
+
+
+@pytest.mark.asyncio
+async def test_forwarder_fetches_media_once_for_concurrent_duplicate_deliveries():
+    transport = FakeTransport()
+    forwarder = Forwarder(source_chat_id="source", target_chat_id="target", destination=transport)
+    media = RecordingMedia("image/jpeg", "photo.jpg", b"jpeg")
+    message = _message("twin", text="caption", attachments=(media,))
+
+    await asyncio.gather(forwarder.handle_message(message), forwarder.handle_message(message))
+
+    assert len(media.fetch_limits) == 1
+    assert transport.sent == [
+        {"chat_id": "target", "text": "caption", "attachments": (Attachment("image/jpeg", "photo.jpg", b"jpeg"),)},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_forwarder_fetches_media_again_when_retrying_a_failed_send():
+    class FailOnceTransport(FakeTransport):
+        def __init__(self):
+            super().__init__()
+            self.failed = False
+
+        async def send(self, chat_id, text, attachments=()):
+            if not self.failed:
+                self.failed = True
+                raise RuntimeError("temporary delivery failure")
+            await super().send(chat_id, text, attachments)
+
+    transport = FailOnceTransport()
+    forwarder = Forwarder(source_chat_id="source", target_chat_id="target", destination=transport)
+    media = RecordingMedia("image/jpeg", "photo.jpg", b"jpeg")
+    message = _message("retry", attachments=(media,))
+
+    with pytest.raises(RuntimeError):
+        await forwarder.handle_message(message)
+    await forwarder.handle_message(message)
+    await forwarder.handle_message(message)
+
+    assert len(media.fetch_limits) == 2
+    assert len(transport.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_forwarder_limits_media_fetch_to_max_attachment_size():
+    transport = FakeTransport()
+    forwarder = Forwarder(
+        source_chat_id="source",
+        target_chat_id="target",
+        destination=transport,
+        max_attachment_size=4,
+    )
+    media = RecordingMedia("image/jpeg", "photo.jpg", b"jpeg")
+
+    await forwarder.handle_message(_message("limited", text="caption", attachments=(media,)))
+
+    assert media.fetch_limits == [4]
+    assert transport.sent[0]["attachments"] == (Attachment("image/jpeg", "photo.jpg", b"jpeg"),)
+
+
+@pytest.mark.asyncio
+async def test_forwarder_skips_in_memory_attachment_larger_than_limit():
+    transport = FakeTransport()
+    forwarder = Forwarder(
+        source_chat_id="source",
+        target_chat_id="target",
+        destination=transport,
+        max_attachment_size=4,
+    )
+
+    await forwarder.handle_message(
+        _message("big", text="caption", attachments=(Attachment("image/jpeg", "big.jpg", b"12345"),)),
+    )
+
+    assert transport.sent == [{"chat_id": "target", "text": "caption", "attachments": ()}]
+
+
+@pytest.mark.asyncio
+async def test_forwarder_forwards_text_when_media_is_unavailable():
+    transport = FakeTransport()
+    forwarder = Forwarder(source_chat_id="source", target_chat_id="target", destination=transport)
+
+    await forwarder.handle_message(
+        _message("no-media", text="caption", attachments=(RecordingMedia("image/jpeg", "gone.jpg", None),)),
+    )
+
+    assert transport.sent == [{"chat_id": "target", "text": "caption", "attachments": ()}]
+
+
+@pytest.mark.asyncio
+async def test_forwarder_does_not_refetch_media_only_message_whose_media_was_unavailable():
+    transport = FakeTransport()
+    forwarder = Forwarder(
+        source_chat_id="source",
+        target_chat_id="target",
+        destination=transport,
+        forward_content=("media",),
+    )
+    media = RecordingMedia("image/jpeg", "gone.jpg", None)
+    message = _message("media-only", text="caption", attachments=(media,))
+
+    await forwarder.handle_message(message)
+    await forwarder.handle_message(message)
+
+    assert len(media.fetch_limits) == 1
+    assert transport.sent == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mime_type", "filename"),
+    [("video/mp4", "clip.mp4"), ("application/octet-stream", "attachment"), ("application/pdf", "doc.pdf")],
+)
+async def test_forwarder_does_not_fetch_media_that_cannot_match_selected_types(mime_type, filename):
+    transport = FakeTransport()
+    forwarder = Forwarder(
+        source_chat_id="source",
+        target_chat_id="target",
+        destination=transport,
+        forward_content=("media",),
+        media_types=("image",),
+    )
+    media = RecordingMedia(mime_type, filename, b"\x00\x00\x00\x18ftypisom")
+
+    await forwarder.handle_message(_message("wrong-type", attachments=(media,)))
+
+    assert media.fetch_limits == []
+    assert transport.sent == []
+
+
+@pytest.mark.asyncio
+async def test_forwarder_drops_generic_binary_without_mp4_signature_when_only_video_is_selected():
+    transport = FakeTransport()
+    forwarder = Forwarder(
+        source_chat_id="source",
+        target_chat_id="target",
+        destination=transport,
+        forward_content=("media",),
+        media_types=("video",),
+    )
+    media = RecordingMedia("application/octet-stream", "attachment", b"not-a-video")
+
+    await forwarder.handle_message(_message("binary", attachments=(media,)))
+
+    assert len(media.fetch_limits) == 1
+    assert transport.sent == []
+
+
+@pytest.mark.asyncio
+async def test_forwarder_does_not_deduplicate_messages_without_an_id():
+    transport = FakeTransport()
+    forwarder = Forwarder(source_chat_id="source", target_chat_id="target", destination=transport)
+
+    await forwarder.handle_message(_message("", text="first"))
+    await forwarder.handle_message(_message("", text="second"))
+
+    assert [item["text"] for item in transport.sent] == ["first", "second"]
+
+
+@pytest.mark.asyncio
+async def test_forwarder_filtered_messages_do_not_evict_forwarded_ids_from_dedupe_cache():
+    transport = FakeTransport()
+    forwarder = Forwarder(
+        source_chat_id="source",
+        target_chat_id="target",
+        destination=transport,
+        filter_policy=KeywordFilter(["urgent"]),
+        recent_ids=1,
+    )
+
+    await forwarder.handle_message(_message("forwarded", text="urgent"))
+    await forwarder.handle_message(_message("filtered", text="boring"))
+    await forwarder.handle_message(_message("forwarded", text="urgent"))
+
+    assert [item["text"] for item in transport.sent] == ["urgent"]

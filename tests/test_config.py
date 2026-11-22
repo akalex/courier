@@ -149,6 +149,16 @@ def test_health_monitor_only_can_be_enabled(tmp_path, monkeypatch):
     assert load_config(path).health_monitor_only is True
 
 
+def test_health_monitor_only_requires_health_alerts(tmp_path, monkeypatch):
+    path = tmp_path / "config.yaml"
+    path.write_text("source_chat_id: source\ntarget_chat_id: target\n", encoding="utf-8")
+    monkeypatch.setenv("HEALTH_MONITOR_ONLY", "true")
+    monkeypatch.setenv("HEALTH_ALERTS_ENABLED", "false")
+
+    with pytest.raises(ValueError, match="HEALTH_MONITOR_ONLY requires HEALTH_ALERTS_ENABLED"):
+        load_config(path)
+
+
 def test_transport_setting_remains_a_legacy_default_for_source_and_destination(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text(
