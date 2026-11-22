@@ -10,6 +10,7 @@ from .config import AppConfig, load_config
 from .domain import Message
 from .filters import AllOf, AnyOf, ExcludeKeywordFilter, KeywordFilter, SenderFilter
 from .forwarder import Forwarder
+from .logging_context import CourierLogContextFilter
 from .ports import Filter, MessageDestination, MessageSource
 
 
@@ -24,6 +25,16 @@ DESTINATIONS: dict[str, Callable[[AppConfig], MessageDestination]] = {
 }
 
 FILTER_COMBINER = AnyOf
+
+
+def _configure_logging(log_level: str) -> None:
+    logging.basicConfig(
+        level=getattr(logging, log_level),
+        format="%(asctime)s %(levelname)s %(name)s: %(courier_context)s%(message)s",
+    )
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(CourierLogContextFilter())
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 def _build_route(config: AppConfig) -> tuple[MessageSource, MessageDestination]:
@@ -121,10 +132,7 @@ async def main() -> None:
         KeyboardInterrupt: If the process is interrupted while running.
     """
     config = load_config()
-    logging.basicConfig(
-        level=getattr(logging, config.log_level),
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    _configure_logging(config.log_level)
 
     source, destination = _build_route(config)
     keywords = config.filters.keywords

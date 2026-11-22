@@ -1,4 +1,5 @@
 import json
+import logging
 from unittest.mock import AsyncMock
 
 import httpx
@@ -557,7 +558,8 @@ async def test_ensure_waha_session_creates_and_starts_missing_session():
 
 
 @pytest.mark.asyncio
-async def test_dispatches_message_from_webhook_payload():
+async def test_dispatches_message_from_webhook_payload(caplog):
+    caplog.set_level(logging.INFO, logger="courier.adapters.waha")
     transport = WAHATransport(
         session_name="demo",
         base_url="http://waha",
@@ -568,7 +570,9 @@ async def test_dispatches_message_from_webhook_payload():
 
     payload = {
         "event": "message",
+        "id": "evt-2",
         "session": "demo",
+        "_courier_webhook": {"request_id": "wh_123"},
         "payload": {
             "id": "msg-2",
             "chatId": "group-1@c.us",
@@ -579,11 +583,11 @@ async def test_dispatches_message_from_webhook_payload():
         },
     }
 
-    message = transport._message_from_payload(payload)
-    await transport._dispatch_message(message, payload)
+    await transport._handle_webhook(payload)
 
     transport._on_message.assert_awaited_once()
     assert transport._on_message.await_args.args[0].id == "msg-2"
+    assert "event=message event_id=evt-2 request_id=wh_123 message_id=msg-2 chat_id=group-1@c.us" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -599,9 +603,7 @@ async def test_session_status_webhook_alerts_once_until_recovery():
     stopped = {"event": "session.status", "session": "demo", "payload": {"status": "STOPPED"}}
     await transport._handle_webhook(stopped)
     await transport._handle_webhook(stopped)
-    await transport._handle_webhook(
-        {"event": "session.status", "session": "demo", "payload": {"status": "WORKING"}}
-    )
+    await transport._handle_webhook({"event": "session.status", "session": "demo", "payload": {"status": "WORKING"}})
 
     assert [call.args[0] for call in transport._alert_handler.await_args_list] == [
         "[Courier Bot] WAHA session demo is STOPPED.",

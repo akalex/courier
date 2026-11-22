@@ -14,6 +14,7 @@ import httpx
 from .. import __version__
 from ..config import AppConfig
 from ..domain import Attachment, Message
+from ..logging_context import log_context
 from ..media import is_mp4_attachment
 from ..webhook_server import WebhookServer
 
@@ -217,7 +218,22 @@ class WAHATransport:
             return
         message = self._message_from_payload(payload)
         if message is not None:
-            await self._dispatch_message(message, payload)
+            webhook_metadata = payload.get("_courier_webhook")
+            request_id = webhook_metadata.get("request_id") if isinstance(webhook_metadata, dict) else None
+            with log_context(
+                request_id=str(request_id) if request_id else None,
+                event_id=_coalesce(payload.get("id")) or None,
+                message_id=message.id or None,
+            ):
+                logger.info(
+                    "Received WAHA message event=%s event_id=%s request_id=%s message_id=%s chat_id=%s",
+                    payload.get("event") or "unknown",
+                    _coalesce(payload.get("id")) or "-",
+                    str(request_id or "-"),
+                    message.id or "-",
+                    message.chat_id,
+                )
+                await self._dispatch_message(message, payload)
 
     async def _handle_session_status(self, event: dict[str, Any]) -> None:
         event_payload = event.get("payload")
@@ -466,6 +482,7 @@ class WAHATransport:
         try:
             if self.session is None:
                 return replace(message, attachments=())
+            logger.info("Downloading WAHA media for message id=%s", message.id or "-")
             response = await self.session.get(
                 str(resolved_media_url),
                 timeout=httpx.Timeout(20.0, connect=10.0, read=20.0),
@@ -475,6 +492,11 @@ class WAHATransport:
             if not data:
                 logger.warning("WAHA returned empty media for message id=%s; forwarding text only", message.id)
                 return replace(message, attachments=())
+            logger.info(
+                "Downloaded WAHA media for message id=%s bytes=%d",
+                message.id or "-",
+                len(data),
+            )
         except httpx.HTTPError:
             logger.warning(
                 "Failed to download WAHA media for message id=%s from %s; forwarding text only",

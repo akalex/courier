@@ -4,8 +4,11 @@ import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any
+
+from .logging_context import log_context
 
 
 logger = logging.getLogger(__name__)
@@ -15,6 +18,16 @@ WebhookHandler = Callable[[dict[str, Any]], Awaitable[None]]
 
 class PayloadTooLargeError(ValueError):
     """Raised when an inbound webhook exceeds the configured size limit."""
+
+
+@dataclass(frozen=True)
+class IncomingRequest:
+    """Parsed HTTP webhook request."""
+
+    method: str
+    target: str
+    body: bytes
+    headers: dict[str, str]
 
 
 class WebhookServer:
@@ -55,7 +68,7 @@ class WebhookServer:
 
     async def _handle_request(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
-            method, target, body = await asyncio.wait_for(self._read_request(reader), timeout=self.request_timeout)
+            request = await asyncio.wait_for(self._read_request(reader), timeout=self.request_timeout)
         except TimeoutError:
             await self._write_response(writer, HTTPStatus.REQUEST_TIMEOUT, b"Request timeout")
             return
@@ -66,32 +79,39 @@ class WebhookServer:
             await self._write_response(writer, HTTPStatus.BAD_REQUEST, b"Bad request")
             return
 
-        if method == "GET" and target == "/health":
+        if request.method == "GET" and request.target == "/health":
             await self._write_response(writer, HTTPStatus.OK, b"OK")
             return
-        if method != "POST" or target != "/webhook":
-            status = HTTPStatus.METHOD_NOT_ALLOWED if target == "/webhook" else HTTPStatus.NOT_FOUND
+        if request.method != "POST" or request.target != "/webhook":
+            status = HTTPStatus.METHOD_NOT_ALLOWED if request.target == "/webhook" else HTTPStatus.NOT_FOUND
             await self._write_response(writer, status, b"Not found")
             return
 
         try:
-            payload = json.loads(body)
+            payload = json.loads(request.body)
         except json.JSONDecodeError, UnicodeDecodeError:
             await self._write_response(writer, HTTPStatus.BAD_REQUEST, b"Invalid JSON")
             return
         if not isinstance(payload, dict):
             await self._write_response(writer, HTTPStatus.BAD_REQUEST, b"Expected JSON object")
             return
+        request_id = request.headers.get("x-webhook-request-id")
+        if request_id:
+            payload["_courier_webhook"] = {"request_id": request_id}
 
         try:
-            await self.handler(payload)
+            with log_context(
+                request_id=request_id or None,
+                event_id=str(payload.get("id") or "-"),
+            ):
+                await self.handler(payload)
         except Exception:
             logger.exception("Webhook event processing failed")
             await self._write_response(writer, HTTPStatus.INTERNAL_SERVER_ERROR, b"Webhook processing failed")
             return
         await self._write_response(writer, HTTPStatus.OK, b"OK")
 
-    async def _read_request(self, reader: asyncio.StreamReader) -> tuple[str, str, bytes]:
+    async def _read_request(self, reader: asyncio.StreamReader) -> IncomingRequest:
         request_line_bytes, header_size = await self._read_header_line(reader, 0)
         request_line = request_line_bytes.decode("ascii").strip()
         parts = request_line.split()
@@ -108,7 +128,12 @@ class WebhookServer:
         if content_length > self.max_body_size:
             raise PayloadTooLargeError("Webhook body exceeds limit")
         body = await reader.readexactly(content_length) if content_length else b""
-        return method.upper(), target, body
+        return IncomingRequest(
+            method=method.upper(),
+            target=target,
+            body=body,
+            headers=headers,
+        )
 
     async def _read_headers(self, reader: asyncio.StreamReader, header_size: int) -> tuple[dict[str, str], int]:
         headers: dict[str, str] = {}

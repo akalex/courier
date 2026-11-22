@@ -2,6 +2,17 @@
 
 Notable changes to Courier are documented here. This changelog follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use Semantic Versioning.
 
+## [0.4.4] - 2026-11-22
+
+### Fixed
+
+- Correlate WAHA webhook deliveries with media downloads and forwarding decisions in logs.
+
+### Changed
+
+- Add webhook request, event, and message identifiers to Courier log context.
+- Reduce noisy `httpx` INFO output.
+
 ## [0.4.3] - 2026-11-21
 
 ### Fixed

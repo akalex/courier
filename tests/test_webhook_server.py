@@ -41,6 +41,34 @@ async def test_webhook_server_dispatches_valid_event():
 
 
 @pytest.mark.asyncio
+async def test_webhook_server_attaches_request_id_metadata():
+    received = []
+
+    async def handler(payload):
+        received.append(payload)
+
+    server = WebhookServer(host="127.0.0.1", port=0, handler=handler)
+    body = b'{"event":"message"}'
+    try:
+        response = await _request(
+            server,
+            b"POST /webhook HTTP/1.1\r\n"
+            b"Host: localhost\r\n"
+            b"X-Webhook-Request-Id: wh_123\r\n" + f"Content-Length: {len(body)}\r\n\r\n".encode() + body,
+        )
+    finally:
+        await server.stop()
+
+    assert response.startswith(b"HTTP/1.1 200")
+    assert received == [
+        {
+            "event": "message",
+            "_courier_webhook": {"request_id": "wh_123"},
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_webhook_server_returns_500_when_delivery_callback_fails():
     async def handler(payload):
         raise RuntimeError("delivery failed")
