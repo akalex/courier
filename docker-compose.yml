@@ -1,19 +1,12 @@
+# Each Courier container is configured by the YAML file mounted at /app/config.yaml.
+# The only value Courier takes from .env is WAHA's API key, so it always matches WAHA's.
 x-courier-common: &courier-common
   image: ghcr.io/akalex/courier:${COURIER_TAG:-latest}
   restart: unless-stopped
   depends_on:
     - waha
-  environment: &courier-environment
-    TRANSPORT: waha
-    CONFIG_PATH: /app/config.yaml
-    WAHA_URL: http://waha:3000
+  environment:
     WAHA_API_KEY: ${WAHA_API_KEY:?Set WAHA_API_KEY in .env}
-    WAHA_SESSION: ${WAHA_SESSION:-default}
-    LOG_LEVEL: ${LOG_LEVEL:-INFO}
-    LISTEN_PORT: ${LISTEN_PORT:-8000}
-    INCLUDE_FROM_ME: ${INCLUDE_FROM_ME:-}
-    HEALTH_ALERTS_ENABLED: false
-    HEALTH_MONITOR_ONLY: false
 
 services:
   waha:
@@ -37,28 +30,15 @@ services:
     container_name: courier-aircraft-losses
     volumes:
       - ./config.yaml:/app/config.yaml:ro
-    environment:
-      <<: *courier-environment
-      WHATSAPP_HOOK_URL: http://courier-aircraft-losses:8000/webhook
-      HEALTH_ALERTS_ENABLED: false
 
   courier-tfl:
     <<: *courier-common
     container_name: courier-tfl
     volumes:
       - ./config-tfl.yaml:/app/config.yaml:ro
-    environment:
-      <<: *courier-environment
-      WHATSAPP_HOOK_URL: http://courier-tfl:8000/webhook
-      HEALTH_ALERTS_ENABLED: false
 
   courier-health:
     <<: *courier-common
     container_name: courier-health
     volumes:
       - ./config-health.yaml:/app/config.yaml:ro
-    environment:
-      <<: *courier-environment
-      WHATSAPP_HOOK_URL: http://courier-health:8000/webhook
-      HEALTH_ALERTS_ENABLED: true
-      HEALTH_MONITOR_ONLY: true
