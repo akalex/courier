@@ -21,6 +21,7 @@ Courier receives WhatsApp messages from WAHA over its HTTP webhook and sends the
 - [Run with Docker](#docker)
 - [Deploy on an Oracle VM](#vm-deployment-with-waha)
 - [Operate and troubleshoot](#operate-and-troubleshoot)
+- [Migrating from 0.8.x](#migrating-from-08x)
 - [Development](#development)
 - [Project structure](#project-structure)
 
@@ -49,45 +50,44 @@ uv sync --dev
 
 ## How it works
 
-1. Courier loads and validates its settings from YAML and environment variables.
-2. It connects to the configured WhatsApp source (currently WAHA) using the configured API key.
-3. It finds or creates the configured WAHA session, registers its webhook for the events this container handles, and starts the session if needed. A forwarding route subscribes to `message` and `message.any`; health alerts add `session.status`. Courier sets exactly these events on its own webhook entry and replaces any others on that URL. When upgrading from the old `courier` container, it removes the obsolete `http://courier:8000/webhook` entry from the existing session; no new session or QR scan is needed.
+1. Courier reads its container's YAML config file (see [Configuration reference](#configuration-reference)) and WAHA's API key from `WAHA_API_KEY`. It reports every problem in the file at once and does not start until they are fixed.
+2. It connects to WAHA at `waha.url` using that API key.
+3. It finds or creates the configured WAHA session, registers its webhook for the events this container handles, and starts the session if needed. A forwarder subscribes to `message` and `message.any`; a health monitor, or a forwarder with `health_alerts: true`, subscribes to `session.status`. Courier sets exactly these events on its own webhook entry and replaces any others on that URL. When upgrading from the old `courier` container, it removes the obsolete `http://courier:8000/webhook` entry from the existing session; no new session or QR scan is needed.
 4. WAHA sends events to Courier's `POST /webhook` endpoint.
 5. Courier ignores events outside the configured source chat and applies filters before downloading any media. It downloads media only when it can match the selected media types, then sends the message to the configured destination.
 
-Courier also sends health notifications when the WAHA session stops, fails, or needs QR authentication, or when the WAHA API becomes unavailable. It checks worker/session health every 30 seconds and sends a recovery notification after service resumes. Set `alert_chat_id` in `config-health.yaml` to choose a fixed recipient; when set, health alerts go only to that recipient, not to a route's `TARGET_CHAT_ID`. The Compose deployment passes the same `ALERT_CHAT_ID` to all Courier containers. If unset, each container defaults to its own `TARGET_CHAT_ID`. For a WAHA destination, use the recipient's WAHA chat ID, such as `15551234567@c.us`.
+A container with `role: health-monitor` sends health notifications when the WAHA session stops, fails, or needs QR authentication, or when the WAHA API becomes unavailable. It checks worker/session health every 30 seconds and sends a recovery notification after service resumes. Alerts go to its `alert_chat_id`; for a WAHA destination, use the recipient's WAHA chat ID, such as `15551234567@c.us`.
 
-In the default multi-route Compose deployment, `courier-health` is the dedicated health-monitor container and is the only Courier service that sends health notifications. It runs with `HEALTH_MONITOR_ONLY=true`, so it subscribes only to `session.status` and never receives or downloads messages. `HEALTH_MONITOR_ONLY` requires `HEALTH_ALERTS_ENABLED`; Courier refuses to start with health-monitor-only mode and alerts disabled. The forwarding routes disable `HEALTH_ALERTS_ENABLED`, so they do not subscribe to `session.status`. Standalone Courier instances default to sending health alerts.
+In the default multi-route Compose deployment, `courier-health` is the only container that sends health notifications. It subscribes only to `session.status` and never receives or downloads messages. The forwarding routes use `role: forwarder` without `health_alerts`, so they do not subscribe to `session.status`. A standalone forwarder can watch health as well by setting `health_alerts: true` and an `alert_chat_id`.
 
 Courier also exposes `GET /health` on the same listen port. The webhook server binds to all container interfaces; in a Compose deployment, WAHA should reach it through the private service network. Do not expose the webhook port to the public internet unless it is protected by an appropriate network or authentication layer.
 
 The WhatsApp source requires two separate WAHA network paths:
 
-- Courier must be able to call WAHA at `WAHA_URL` for session setup and media downloads (and outgoing messages when WAHA is the destination).
-- WAHA must be able to call Courier at `WHATSAPP_HOOK_URL` to deliver incoming events.
+- Courier must be able to call WAHA at `waha.url` for session setup and media downloads (and outgoing messages when WAHA is the destination).
+- WAHA must be able to call Courier at `webhook_url` to deliver incoming events.
 
 If WAHA runs on another VM, both paths must be routable between the machines. Prefer a private network/VPN or TLS-protected endpoints with firewall rules allowing only the required traffic. Do not publish WAHA's unauthenticated or unencrypted API port directly to the internet.
 
 ## Routing examples
 
-Courier currently receives messages from WhatsApp through WAHA. Select the destination with `destination_transport` and set `target_chat_id` to the destination chat or room. The examples below assume WAHA connection settings (`waha_url`, `waha_api_key`, `waha_session`, and `webhook_url`) are configured as shown in the [configuration reference](#configuration-reference).
+Courier currently receives messages from WhatsApp through WAHA. Select the destination with `destination_transport` and set `target_chat_id` to the destination chat or room. Each example below is a complete config file for a container running next to WAHA on the same machine; WAHA's API key comes from `WAHA_API_KEY`, never from the file.
 
 ### 1. WhatsApp → WhatsApp
 
 Use the WhatsApp chat IDs returned by WAHA for both the source and target:
 
 ```yaml
-source_transport: waha
-destination_transport: waha
-source_chat_id: "120363123456789012@g.us"
-target_chat_id: "120363987654321098@g.us"
+role: forwarder
+webhook_url: "http://localhost:8000/webhook"
 
 waha:
   url: "http://localhost:3000"
-  api_key: "your-waha-api-key"
   session: "default"
 
-webhook_url: "http://localhost:8000/webhook"
+destination_transport: waha
+source_chat_id: "120363123456789012@g.us"
+target_chat_id: "120363987654321098@g.us"
 ```
 
 The message is sent to the target WhatsApp chat by the linked WhatsApp account.
@@ -97,26 +97,25 @@ The message is sent to the target WhatsApp chat by the linked WhatsApp account.
 Element connects to a Matrix homeserver, so use the homeserver URL and a Matrix room ID. The Matrix account represented by the access token must already have joined that room:
 
 ```yaml
-source_transport: waha
-destination_transport: matrix
-source_chat_id: "120363123456789012@g.us"
-target_chat_id: "!roomid:example.org"
+role: forwarder
+webhook_url: "http://localhost:8000/webhook"
 
 waha:
   url: "http://localhost:3000"
-  api_key: "your-waha-api-key"
   session: "default"
 
-webhook_url: "http://localhost:8000/webhook"
+destination_transport: matrix
+source_chat_id: "120363123456789012@g.us"
+target_chat_id: "!roomid:example.org"
 
 matrix:
   homeserver_url: "https://matrix.example.org"
   access_token: "your-matrix-access-token"
 ```
 
-Keep the Matrix access token secret. You can set it through `MATRIX_ACCESS_TOKEN` instead of putting it in the YAML file. Text and supported media are sent to the configured room.
+The Matrix access token is a secret, so keep this file private (`chmod 600 config.yaml`). Text and supported media are sent to the configured room.
 
-For either route, add the existing `filters` settings to the same YAML file if you want to filter messages. In Docker deployments, WAHA must be able to reach Courier at `WHATSAPP_HOOK_URL`; use a network-reachable hostname rather than `localhost` when the services run in separate containers.
+For either route, add `filters` to the same file if you want to filter messages (see [Configuration reference](#configuration-reference)). In Docker deployments, WAHA must be able to reach Courier at `webhook_url`; use a network-reachable hostname rather than `localhost` when the services run in separate containers.
 
 ## Message behavior and limitations
 
@@ -140,107 +139,114 @@ For either route, add the existing `filters` settings to the same YAML file if y
 
 ## Configuration reference
 
-Courier reads a YAML mapping from `config.yaml` by default. Set `CONFIG_PATH` to use another file. Environment variables take precedence over the corresponding YAML setting; `INCLUDE_FROM_ME` is treated as unset when it is blank.
+Each Courier container is configured in exactly one place:
 
-Example `config.yaml`:
+| Place | What goes there |
+| --- | --- |
+| The container's YAML file (`/app/config.yaml` in the container) | Every Courier setting listed below |
+| `WAHA_API_KEY` environment variable | WAHA's API key. Under Docker Compose it comes from WAHA's `.env`, so it always matches WAHA's |
+| `CONFIG_PATH` environment variable | Which YAML file to read; defaults to `config.yaml` in the working directory (`/app/config.yaml` in the image) |
 
-```yaml
-source_transport: waha
-destination_transport: matrix
-source_chat_id: "120363123456789012@g.us"
-target_chat_id: "!roomid:example.org"
-listen_port: 8000
-log_level: INFO
-waha_url: "http://localhost:3000"
-waha_api_key: "your-waha-api-key"
-waha_session: "default"
-webhook_url: "http://localhost:8000/webhook"
-include_from_me: false
-max_attachment_size: 20971520
-forward_content: [text, media]
-media_types: [image, video, audio, file]
+Courier reads no other environment variables. Settings in the 0.8.x style (`SOURCE_CHAT_ID`, `HEALTH_MONITOR_ONLY`, `LOG_LEVEL`, `waha_url`, …) are rejected at startup with a message saying which key to set instead; see [Migrating from 0.8.x](#migrating-from-08x).
 
-matrix:
-  homeserver_url: "https://matrix.example.org"
-  access_token: "your-matrix-access-token"
+Every file starts with `role`, which decides which keys are allowed:
 
-filters:
-  keywords:
-    - "vip"
-    - "alert"
-  exclude_keywords:
-    - "city"
-    - "New York"
-  senders:
-    - "+1234567890"
-    - "alice@example.com"
+- `forwarder` forwards messages from one source chat to one target chat. Start from [examples/config-forwarder.yaml](examples/config-forwarder.yaml).
+- `health-monitor` watches the WAHA session and sends alerts; it forwards nothing, so it has no chats or filters. Start from [examples/config-health-monitor.yaml](examples/config-health-monitor.yaml).
+
+An unknown or misspelled key, a key that doesn't apply to the role, or an invalid value stops Courier at startup. It lists every problem at once, each naming the file and the key:
+
+```text
+Courier cannot start until these config problems are fixed:
+/app/config.yaml: `source_chat_id` does not apply to role `health-monitor`
+/app/config.yaml: unknown key `filters.keyword`
 ```
 
-| Setting | Environment variable | YAML key | Default / requirement |
+Leaving a key blank (`key:` with no value) is the same as leaving it out.
+
+Keys for both roles:
+
+| Key | Required | Default | What it does |
 | --- | --- | --- | --- |
-| Legacy transport | `TRANSPORT` | `transport` | `waha`; defaults both source and destination to WAHA |
-| Source transport | `SOURCE_TRANSPORT` | `source_transport` | `waha`; currently the only supported source |
-| Destination transport | `DESTINATION_TRANSPORT` | `destination_transport` | Inherits `TRANSPORT` or defaults to `waha`; supports `waha` or `matrix` |
-| Source chat ID | `SOURCE_CHAT_ID` | `source_chat_id` | Required |
-| Destination chat/room ID | `TARGET_CHAT_ID` | `target_chat_id` | Required; for Matrix use the room ID, e.g. `!roomid:example.org` |
-| Health alert chat/room ID | `ALERT_CHAT_ID` | `alert_chat_id` | Defaults to `TARGET_CHAT_ID`; for WAHA use the recipient chat ID, e.g. `15551234567@c.us` |
-| Health notifications | `HEALTH_ALERTS_ENABLED` | `health_alerts_enabled` | `true`; set to `false` on forwarding containers |
-| Health-monitor-only mode | `HEALTH_MONITOR_ONLY` | `health_monitor_only` | `false`; requires health alerts to be enabled |
-| Webhook listen port | `LISTEN_PORT` | `listen_port` | `8000`; must be a positive integer |
-| Log level | `LOG_LEVEL` | `log_level` | `INFO`; must be a recognized Python logging level |
-| WAHA base URL | `WAHA_URL` | `waha_url` or `waha.url` | `http://localhost:3000` |
-| WAHA API key | `WAHA_API_KEY` | `waha_api_key` or `waha.api_key` | Empty (only use this if WAHA does not require a key) |
-| WAHA session name | `WAHA_SESSION` | `waha_session` or `waha.session` | `default` |
-| Courier webhook URL registered in WAHA | `WHATSAPP_HOOK_URL` | `webhook_url` | `http://localhost:8000/webhook` |
-| Matrix homeserver URL | `MATRIX_HOMESERVER_URL` | `matrix.homeserver_url` | Required for a Matrix destination |
-| Matrix access token | `MATRIX_ACCESS_TOKEN` | `matrix.access_token` | Required for a Matrix destination; keep it secret |
-| Include messages sent by the linked account | `INCLUDE_FROM_ME` | `include_from_me` | `false`; accepts true/false, yes/no, on/off, or 1/0 |
-| Maximum outgoing attachment size in bytes | — | `max_attachment_size` | `20971520` (20 MiB); must be positive |
-| Message content to forward | — | `forward_content` | `[text, media]`; accepts one or both values |
-| Eligible attachment categories | — | `media_types` | `[image, video, audio, file]`; applies only when forwarding media |
-| Required/include keyword values | — | `filters.keywords` | Empty; accepts a YAML list or comma-separated string; any one match satisfies the keyword criterion |
-| Excluded keyword values | — | `filters.exclude_keywords` | Empty; accepts a YAML list or comma-separated string; any one match rejects the message |
-| Sender filter values | — | `filters.senders` | Empty; accepts a YAML list or comma-separated string |
-| Config file path | `CONFIG_PATH` | — | `config.yaml` |
+| `role` | yes | — | `forwarder` or `health-monitor`. |
+| `webhook_url` | yes | — | URL WAHA calls to deliver events to this container, for example `http://courier-tfl:8000/webhook`. Must be reachable from WAHA and unique per container. |
+| `listen_port` | no | `8000` | Port Courier listens on inside the container. Keep it equal to the port in `webhook_url` unless a proxy sits between them. |
+| `log_level` | no | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`. |
+| `waha.url` | no | `http://localhost:3000` | URL Courier uses to call WAHA; `http://waha:3000` under Docker Compose. |
+| `waha.session` | no | `default` | WAHA session (the linked WhatsApp account). |
+| `destination_transport` | no | `waha` | Where messages and alerts go: `waha` (WhatsApp) or `matrix`. |
+| `matrix.homeserver_url` | with `matrix` | — | Matrix homeserver URL. Allowed only with `destination_transport: matrix`. |
+| `matrix.access_token` | with `matrix` | — | Access token of the Matrix account that posts. Secret: keep the file private (`chmod 600`). |
+| `alert_chat_id` | see note | — | Chat (or Matrix room) that receives health alerts. Required for a health monitor and for a forwarder with `health_alerts: true`; rejected otherwise. It never falls back to `target_chat_id`. |
 
-`WHATSAPP_HOOK_URL` is the URL WAHA calls to deliver events; it must be reachable from the WAHA container/network. This is distinct from `WAHA_URL`, which Courier uses to call WAHA. For separate Courier containers, use a unique service name or otherwise unique webhook URL for each instance. `LISTEN_PORT` is the port Courier binds inside its container; separate containers can use the same internal port.
+Forwarder-only keys (rejected on a health monitor):
 
-For a Matrix destination, `TARGET_CHAT_ID` is the Matrix room ID, and the Matrix user represented by `MATRIX_ACCESS_TOKEN` must already be joined to that room. Keep the access token secret.
+| Key | Required | Default | What it does |
+| --- | --- | --- | --- |
+| `source_chat_id` | yes | — | WhatsApp chat messages are forwarded from. |
+| `target_chat_id` | yes | — | Chat messages are forwarded to: a WhatsApp chat ID, or a Matrix room ID such as `!roomid:example.org`. |
+| `source_transport` | no | `waha` | Where messages come from; only `waha` is supported. |
+| `include_from_me` | no | `false` | Also forward messages sent by the linked WhatsApp account. WhatsApp-to-WhatsApp routes then need different source and target chats. |
+| `forward_content` | no | `[text, media]` | `text`, `media`, or both. |
+| `media_types` | no | `[image, video, audio, file]` | Attachment kinds to forward when forwarding media. |
+| `max_attachment_size` | no | `20971520` | Largest attachment in bytes (20 MiB); larger attachments are skipped and the text is still sent. |
+| `filters.keywords` | no | empty | Forward a message whose text contains any of these (case-insensitive). A list or a comma-separated string. |
+| `filters.exclude_keywords` | no | empty | Never forward a message whose text contains any of these. |
+| `filters.senders` | no | empty | Forward a message sent by any of these sender IDs or names. |
+| `health_alerts` | no | `false` | Also watch WAHA session health and send alerts to `alert_chat_id`. Normally the health-monitor container does this. |
 
-`max_attachment_size`, content selection, media types, and filter values are configured in YAML; they have no environment-variable overrides. Unknown transport names and invalid typed settings fail during startup. For WhatsApp-to-WhatsApp routes, `INCLUDE_FROM_ME` requires distinct source and target chat IDs to avoid loops. Filter order/combination is: the message must pass at least one configured include criterion (keyword or sender), if any are configured, and must not match any excluded keyword. When only exclusions are configured, all messages without excluded terms are eligible.
+Filters combine like this: a message must match at least one include criterion (a keyword or a sender), if any are configured, and must not contain an excluded keyword. With only exclusions configured, every message without an excluded keyword is forwarded.
 
-The Compose deployment defines two forwarding routes and a dedicated health monitor: `courier-aircraft-losses` keeps the existing `config.yaml` behavior, `courier-tfl` uses `config-tfl.yaml` to forward only video attachments, and `courier-health` uses `config-health.yaml`. Configure `source_chat_id` and `target_chat_id` in each route's YAML file. Put courier-health-specific settings in `config-health.yaml`:
+`webhook_url` is the URL WAHA calls to deliver events, so it must be reachable from the WAHA container or network. It is distinct from `waha.url`, which Courier uses to call WAHA. Give each Courier container its own `webhook_url`, typically based on its Compose service name; all containers can share the same WAHA session and internal `listen_port`.
 
-```yaml
-health_alerts_enabled: true
-health_monitor_only: true
-alert_chat_id: "15551234567@c.us"
+For a Matrix destination, `target_chat_id` (and `alert_chat_id`, if alerts go to Matrix) is a Matrix room ID, and the account behind `matrix.access_token` must already have joined that room.
+
+### Editor support
+
+Courier publishes a JSON Schema for its config files. In VS Code with the [Red Hat YAML extension](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml), make this the first line of a config file to get autocomplete, a description of each key on hover, and errors highlighted as you type:
+
+```text
+# yaml-language-server: $schema=https://raw.githubusercontent.com/akalex/courier/0.9.0/courier-config.schema.json
 ```
 
-Keep `health_alerts_enabled: false` on forwarding-only route configs. Environment variables override these YAML values, so the Compose deployment also sets `HEALTH_ALERTS_ENABLED` and `HEALTH_MONITOR_ONLY` explicitly. All containers extend the shared `x-courier-common` settings. Configure the health recipient with `alert_chat_id` in `config-health.yaml`, then recreate the Courier containers with `docker compose up -d --force-recreate courier-aircraft-losses courier-tfl courier-health`. To add another route, for example `courier-blink`, add another service that extends the same template, mounts its own config file, and sets its own webhook URL and chat IDs in that config file. Use a unique webhook URL based on the Compose service name; all routes can share the same WAHA session and internal listen port.
+Use the version that matches your `COURIER_TAG`. This also works when editing files on the VM over Remote-SSH. The files in [examples/](examples/) point at the schema in this repository.
+
+### Compose deployment
+
+The Compose deployment runs two forwarding routes and a dedicated health monitor, each configured by the YAML file it mounts:
+
+| Service | Config file | Role |
+| --- | --- | --- |
+| `courier-aircraft-losses` | `config.yaml` | Forwards messages that mention `urgent` or `alert` |
+| `courier-tfl` | `config-tfl.yaml` | Forwards only video attachments |
+| `courier-health` | `config-health.yaml` | Health monitor; the only container that sends health alerts |
+
+Complete versions of all three files are in [examples/compose/](examples/compose/) and in the [deployment steps](#vm-deployment-with-waha). After changing a file, recreate its container, for example `docker compose up -d --force-recreate courier-health`.
+
+To add another route, for example `courier-blink`: copy a forwarder config to `config-blink.yaml`, set its `webhook_url` to `http://courier-blink:8000/webhook` and its chats, then add a service that extends the shared template and mounts the file:
+
+```yaml
+  courier-blink:
+    <<: *courier-common
+    container_name: courier-blink
+    volumes:
+      - ./config-blink.yaml:/app/config.yaml:ro
+```
 
 ## Run locally
 
-Create `config.yaml` using the [configuration reference](#configuration-reference), make sure WAHA is reachable at the configured URL, then run:
+Create `config.yaml` from [examples/config-forwarder.yaml](examples/config-forwarder.yaml), set `waha.url` to where WAHA runs (for example `http://localhost:3000`), then run:
 
 ```bash
 cd /workspaces/courier
-uv run python -m courier.main
+WAHA_API_KEY="..." uv run python -m courier.main
 ```
 
-For a quick local run, environment variables can supply the required chat IDs and override YAML values:
-
-```bash
-LOG_LEVEL=DEBUG SOURCE_CHAT_ID="..." TARGET_CHAT_ID="..." \
-WAHA_URL="http://localhost:3000" WAHA_API_KEY="..." \
-uv run python -m courier.main
-```
-
-The webhook URL in `WHATSAPP_HOOK_URL` must be reachable from WAHA. When WAHA runs in Docker and Courier runs on the host, use a host address reachable from the WAHA container rather than `localhost` from WAHA's point of view.
+To run another file, add `CONFIG_PATH=config-tfl.yaml`. The `webhook_url` must be reachable from WAHA: when WAHA runs in Docker and Courier runs on the host, use a host address reachable from the WAHA container rather than `localhost` from WAHA's point of view.
 
 ## Docker
 
-The following is a minimal example for a single Docker host. Make sure the configured webhook URL is reachable from WAHA. For a production setup with persistent WAHA data and credentials, use the [VM deployment walkthrough](#vm-deployment-with-waha).
+The following is a minimal example for a single Docker host. For a production setup with persistent WAHA data and credentials, use the [VM deployment walkthrough](#vm-deployment-with-waha).
 
 Build the image:
 
@@ -249,21 +255,17 @@ cd /workspaces/courier
 docker build -t courier .
 ```
 
-Run it with required environment variables:
+Run it with your config file mounted and WAHA's API key:
 
 ```bash
 docker run --rm -it \
   -p 8000:8000 \
-  -e TRANSPORT=waha \
-  -e SOURCE_CHAT_ID="..." \
-  -e TARGET_CHAT_ID="..." \
-  -e WAHA_URL="http://host.docker.internal:3000" \
+  -v "$PWD/config.yaml:/app/config.yaml:ro" \
   -e WAHA_API_KEY="..." \
-  -e WHATSAPP_HOOK_URL="http://host.docker.internal:8000/webhook" \
   courier
 ```
 
-On Linux, `host.docker.internal` may need to be added with Docker's `--add-host=host.docker.internal:host-gateway` option. Alternatively, put WAHA and Courier on the same user-defined Docker network and use the Courier service/container name as the webhook hostname.
+In that `config.yaml`, set `waha.url: http://host.docker.internal:3000` and `webhook_url: http://host.docker.internal:8000/webhook`. On Linux, `host.docker.internal` may need Docker's `--add-host=host.docker.internal:host-gateway` option. Alternatively, put WAHA and Courier on the same user-defined Docker network and use the Courier container name as the webhook hostname.
 
 ## VM deployment with WAHA
 
@@ -299,32 +301,72 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
    chmod 600 .env
    ```
 
-   This generates a new WAHA API key and dashboard/Swagger logins. Use strong, unique values for the API key and passwords. Keep the generated `.env` private; Courier and WAHA use the same API key. Continue with the next step to add Courier's settings to this file.
-4. Add Courier's settings to `.env`. Replace the chat IDs with the real IDs after linking WhatsApp and looking up your chats:
+   This generates a new WAHA API key and dashboard/Swagger logins. Use strong, unique values for the API key and passwords. Keep the generated `.env` private; Courier containers receive the same API key from it.
+4. `.env` belongs to WAHA. The only Courier line it holds is the image tag every Courier container runs. Add it to the generated file:
 
-   ```dotenv
-   WAHA_SESSION=default
-   LOG_LEVEL=INFO
-   LISTEN_PORT=8000
-   COURIER_TAG=latest
+   ```bash
+   echo "COURIER_TAG=0.9.0" >> .env
    ```
 
-5. Create `config.yaml` and `config-tfl.yaml` in the same directory. The first is the existing route's filter configuration:
+   Use an exact version for a reproducible deployment, or `latest` to follow the newest release. Everything else Courier needs goes in its YAML files; compare with [.env.example](.env.example).
+
+5. Create one YAML file per Courier container in the same directory. Each file fully describes its container; the files below match [examples/compose/](examples/compose/). Use placeholder chat IDs for now and replace them after linking WhatsApp (step 9). The first line enables [editor support](#editor-support).
+
+   `config.yaml` (`courier-aircraft-losses`, forwards messages that mention `urgent` or `alert`):
 
    ```yaml
+   # yaml-language-server: $schema=https://raw.githubusercontent.com/akalex/courier/0.9.0/courier-config.schema.json
+   role: forwarder
+   webhook_url: http://courier-aircraft-losses:8000/webhook
+
+   waha:
+     url: http://waha:3000
+     session: default
+
+   source_chat_id: "120363000000000011@g.us"
+   target_chat_id: "120363000000000012@g.us"
+
    filters:
      keywords:
        - urgent
        - alert
    ```
 
-   Keywords are case-insensitive substrings; any one matching keyword is sufficient. To disable keyword filtering, use an empty config file (`{}`) instead.
-   The TFL route uses this content configuration (add any desired filters to the same file):
+   Keywords are case-insensitive substrings; any one matching keyword is enough. Remove `filters` to forward every message from the source chat.
+
+   `config-tfl.yaml` (`courier-tfl`, forwards only video attachments, without captions):
 
    ```yaml
+   # yaml-language-server: $schema=https://raw.githubusercontent.com/akalex/courier/0.9.0/courier-config.schema.json
+   role: forwarder
+   webhook_url: http://courier-tfl:8000/webhook
+
+   waha:
+     url: http://waha:3000
+     session: default
+
+   source_chat_id: "120363000000000021@g.us"
+   target_chat_id: "120363000000000022@g.us"
+
    forward_content: [media]
    media_types: [video]
    ```
+
+   `config-health.yaml` (`courier-health`, the only container that sends health alerts):
+
+   ```yaml
+   # yaml-language-server: $schema=https://raw.githubusercontent.com/akalex/courier/0.9.0/courier-config.schema.json
+   role: health-monitor
+   webhook_url: http://courier-health:8000/webhook
+   alert_chat_id: "15551234567@c.us"
+
+   waha:
+     url: http://waha:3000
+     session: default
+   ```
+
+   If a file holds a Matrix access token, keep it private with `chmod 600 <file>`.
+
 6. Create `docker-compose.yml` in the same directory:
 
    ```bash
@@ -334,15 +376,8 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
      restart: unless-stopped
      depends_on:
        - waha
-     environment: &courier-environment
-       TRANSPORT: waha
-       CONFIG_PATH: /app/config.yaml
-       WAHA_URL: http://waha:3000
+     environment:
        WAHA_API_KEY: ${WAHA_API_KEY:?Set WAHA_API_KEY in .env}
-       WAHA_SESSION: ${WAHA_SESSION:-default}
-       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-       LISTEN_PORT: ${LISTEN_PORT:-8000}
-       INCLUDE_FROM_ME: ${INCLUDE_FROM_ME:-}
 
    services:
      waha:
@@ -366,31 +401,31 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
        container_name: courier-aircraft-losses
        volumes:
          - ./config.yaml:/app/config.yaml:ro
-       environment:
-         <<: *courier-environment
-         WHATSAPP_HOOK_URL: http://courier-aircraft-losses:8000/webhook
 
      courier-tfl:
        <<: *courier-common
        container_name: courier-tfl
        volumes:
          - ./config-tfl.yaml:/app/config.yaml:ro
-       environment:
-         <<: *courier-environment
-         WHATSAPP_HOOK_URL: http://courier-tfl:8000/webhook
+
+     courier-health:
+       <<: *courier-common
+       container_name: courier-health
+       volumes:
+         - ./config-health.yaml:/app/config.yaml:ro
    EOF
    ```
 
-   To add `courier-blink`, copy the `courier-tfl` service block and rename the service and `container_name` to `courier-blink`. Mount `./config-blink.yaml`, set `WHATSAPP_HOOK_URL` to `http://courier-blink:8000/webhook`, and configure `source_chat_id` and `target_chat_id` in `config-blink.yaml`. The same pattern works for each additional route.
+   Courier services set no environment of their own: each one's settings are in the YAML file it mounts. To add a route, see [Compose deployment](#compose-deployment).
 
-7. Start both services:
+7. Start the services:
 
    ```bash
    docker compose pull
    docker compose up -d
    ```
 
-   Each route uses the configured WAHA session and registers its own `message` webhook automatically.
+   Each container registers its own webhook in the shared WAHA session: the forwarders for message events, `courier-health` for `session.status`.
 
 8. To access the WAHA dashboard and Swagger without an SSH tunnel, put Nginx on the VM in front of WAHA. Allow inbound TCP ports 80 and 443 in the Oracle Cloud NSG or Security List and in the VM firewall if enabled. Port 80 is needed for Let's Encrypt validation; port 443 serves HTTPS. Do not open port 3000 publicly.
 
@@ -521,11 +556,11 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
 
    Open `https://waha.example.com/dashboard` (or `https://<VM_PUBLIC_IP>/dashboard` when using an IP certificate), sign in with the generated Dashboard credentials, connect using the generated WAHA API key, and scan the QR code. Swagger is at the same base URL followed by `/swagger`; use the generated Swagger username and password as well as the API key when prompted. This makes the WAHA administration interface publicly reachable, so use strong unique credentials and share the URL only with authorized users.
 
-   To find the chat IDs, open WAHA's Swagger UI at `https://waha.example.com/swagger` (or the IP URL), authorize with the generated API key, then call `GET /api/default/chats` (replace `default` with the value of `WAHA_SESSION` if different). Find each route's source and destination groups by name and copy each `id` exactly as returned; group IDs typically end in `@g.us`. Update the route-specific chat ID variables in `/opt/courier/.env`, then recreate the affected Courier service(s). Include any additional route names you added:
+9. **Find chat IDs.** Open WAHA's Swagger UI at `https://waha.example.com/swagger` (or the IP URL), authorize with the generated API key, then call `GET /api/default/chats` (replace `default` with your `waha.session` if different). Find each route's source and destination groups by name and copy each `id` exactly as returned; group IDs typically end in `@g.us`. Put them in `source_chat_id` and `target_chat_id` in each route's YAML file, and the alert recipient in `alert_chat_id` in `config-health.yaml`. Then recreate the Courier containers, including any additional routes you added:
 
    ```bash
    cd /opt/courier
-   docker compose up -d --force-recreate courier-aircraft-losses courier-tfl
+   docker compose up -d --force-recreate courier-aircraft-losses courier-tfl courier-health
    ```
 
 ## Operate and troubleshoot
@@ -534,35 +569,43 @@ Run these commands from the deployment directory containing `docker-compose.yml`
 
 ```bash
 docker compose ps
-docker compose logs --tail=100 courier-aircraft-losses courier-tfl
+docker compose logs --tail=100 courier-aircraft-losses courier-tfl courier-health
 docker compose logs --tail=100 waha
-docker compose restart courier-aircraft-losses courier-tfl
+docker compose restart courier-aircraft-losses courier-tfl courier-health
 ```
 
-When changing route chat IDs, `WAHA_SESSION`, or other `.env` values, recreate the affected Courier container so it receives the updated environment:
+After editing a container's YAML file, recreate that container so it reads the file again:
 
 ```bash
-docker compose up -d --force-recreate courier-aircraft-losses courier-tfl
+docker compose up -d --force-recreate courier-tfl
 ```
 
-Include any additional route service names in these route-specific commands.
+After changing `.env` (WAHA's settings or `COURIER_TAG`), recreate everything with `docker compose up -d --force-recreate`.
 
-Each Courier process/container manages exactly one WAHA session and one source-to-target route. To use another session or route at the same time, run another Courier container with its own environment values and a distinct reachable webhook URL/service name. Give each instance its own routing settings. Each container can listen on port `8000` internally; host-published ports must be unique if publishing them directly.
+If Courier rejects its config, the container exits and its log lists every problem, each naming the file and the key. Inside a container the file is always `/app/config.yaml`; the service name at the start of each `docker compose logs` line tells you which host file that is (`courier-health` mounts `config-health.yaml`):
+
+```text
+courier-health  | Courier cannot start until these config problems are fixed:
+courier-health  | /app/config.yaml: `source_chat_id` does not apply to role `health-monitor`
+```
+
+Each Courier container uses one WAHA session and has one role. To use another session or route at the same time, run another Courier container with its own YAML file and a distinct reachable `webhook_url`. Each container can listen on port `8000` internally; host-published ports must be unique if publishing them directly.
 
 | Symptom | Check |
 | --- | --- |
-| Courier exits during startup with missing/invalid config | Check `SOURCE_CHAT_ID`, `TARGET_CHAT_ID`, `CONFIG_PATH`, the YAML shape, positive `LISTEN_PORT`/`max_attachment_size`, and `LOG_LEVEL`. |
-| Courier cannot connect to WAHA | Check `WAHA_URL`, container DNS/networking, WAHA readiness, and that `WAHA_API_KEY` matches the WAHA instance. Review both Courier and WAHA logs. |
-| WAHA session stays stopped or requires linking | Open WAHA Dashboard, select the configured `WAHA_SESSION`, and scan its QR code. A different session name refers to a separate WAHA session; changing the name does not rename or delete the old session. |
-| Messages do not arrive at Courier | Verify WAHA can reach `WHATSAPP_HOOK_URL`, that it points to `POST /webhook`, and that the Courier port is available on the shared network. |
-| Messages arrive but are not forwarded | Verify the exact `SOURCE_CHAT_ID`, keyword/sender filter settings, and `INCLUDE_FROM_ME`. Courier logs filter decisions at INFO and raw sender details at DEBUG. |
-| WAHA reports webhook delivery failures | Inspect Courier logs for forwarding exceptions and WAHA logs for retry status. Ensure the target chat exists and Courier's WAHA API credentials are valid. |
-| Media is absent but text arrives | Check WAHA's media URL and network accessibility, whether the resolved URL has the same origin as `WAHA_URL`, the file size limit, and WAHA endpoint support for that media type. |
+| Courier exits during startup with config problems | Read the problem lines in its log (see above); each names the key to fix in that container's YAML file. |
+| Courier cannot connect to WAHA | Check `waha.url`, container DNS/networking, WAHA readiness, and that `WAHA_API_KEY` in `.env` matches the WAHA instance. Review both Courier and WAHA logs. |
+| WAHA session stays stopped or requires linking | Open WAHA Dashboard, select the session named in `waha.session`, and scan its QR code. A different session name refers to a separate WAHA session; changing the name does not rename or delete the old session. |
+| Messages do not arrive at Courier | Verify WAHA can reach `webhook_url`, that it points to `POST /webhook`, and that the Courier port is available on the shared network. |
+| Messages arrive but are not forwarded | Verify the exact `source_chat_id`, the `filters`, and `include_from_me`. Courier logs filter decisions at INFO and raw sender details at DEBUG (`log_level: DEBUG`). |
+| Health alerts do not arrive | Only a container with `role: health-monitor`, or a forwarder with `health_alerts: true`, sends them, to its `alert_chat_id`. Check that `courier-health` is running and its log says it started as a health monitor. |
+| WAHA reports webhook delivery failures | Inspect Courier logs for forwarding exceptions and WAHA logs for retry status. Ensure the target chat exists and Courier's WAHA API key is valid. |
+| Media is absent but text arrives | Check WAHA's media URL and network accessibility, whether the resolved URL has the same origin as `waha.url`, the file size limit, and WAHA endpoint support for that media type. |
 | Repeated messages appear after restart or retry | Deduplication is in memory and bounded; it is not durable or exactly-once. WAHA retries may resend an event after an uncertain send result. |
 
-For group IDs, use WAHA Swagger's `GET /api/{session}/chats`, find each group by name, and copy its `id` exactly. Group IDs usually end in `@g.us`. Update the relevant route's source and target variables and recreate its Courier container.
+To find group IDs, see step 9 of the [deployment walkthrough](#vm-deployment-with-waha).
 
-To upgrade later, change `COURIER_TAG` in `.env` to `latest`, an exact SemVer tag such as `0.1.0`, or a commit SHA, then run `docker compose pull && docker compose up -d` to update every service in the deployment. Exact version and commit-SHA tags make rollbacks reproducible. If you do have repository access on the VM, cloning it is also an option; run Compose from the directory containing `docker-compose.yml`.
+To upgrade later, change `COURIER_TAG` in `.env` to `latest`, an exact SemVer tag such as `0.9.0`, or a commit SHA, then run `docker compose pull && docker compose up -d` to update every service in the deployment. Exact version and commit-SHA tags make rollbacks reproducible. Before upgrading across a release that changes the config format, read its migration notes, for example [Migrating from 0.8.x](#migrating-from-08x). If you do have repository access on the VM, cloning it is also an option; run Compose from the directory containing `docker-compose.yml`.
 
 ### Releases and image tags
 
@@ -572,7 +615,42 @@ A SemVer tag publishes `X.Y.Z`, `X.Y`, `X`, `latest`, and the full commit SHA im
 
 Runtime credentials stay on the VM in the ignored `.env` file, not in Git. WAHA's web UI is bound to the VM's loopback interface; use the HTTPS Nginx proxy for browser access and never expose port `3000` publicly.
 
-Courier listens for inbound webhook events on `/webhook` using `LISTEN_PORT`. Each route registers its own webhook to its corresponding service over the private Compose network.
+Courier listens for inbound webhook events on `/webhook` at its `listen_port`. Each container registers its own `webhook_url` in WAHA over the private Compose network.
+
+## Migrating from 0.8.x
+
+0.9.0 moves every Courier setting into the container's YAML file. Started with a 0.8.x setup, Courier 0.9.0 refuses to start and lists each setting to move, but you can migrate in one pass:
+
+1. Back up `.env`, the YAML files, and `docker-compose.yml`.
+2. In `.env`, delete the Courier lines: `TRANSPORT`, `WAHA_URL`, `WAHA_SESSION`, `LOG_LEVEL`, `LISTEN_PORT`, `INCLUDE_FROM_ME`, and any `SOURCE_CHAT_ID`, `TARGET_CHAT_ID`, `ALERT_CHAT_ID`, `HEALTH_*`, or `MATRIX_*` lines. Keep the WAHA lines and `COURIER_TAG`, and set `COURIER_TAG=0.9.0`.
+3. Rewrite each YAML file with `role`, `webhook_url`, and a `waha` section, moving values over with the table below. The three Compose files are shown in full in step 5 of the [deployment walkthrough](#vm-deployment-with-waha).
+4. Replace `docker-compose.yml` with the one in step 6.
+5. Run `docker compose pull && docker compose up -d --force-recreate` and check each Courier container's log.
+
+| 0.8.x setting (environment variable or YAML key) | 0.9.0 YAML key |
+| --- | --- |
+| A forwarding container | `role: forwarder` |
+| `HEALTH_MONITOR_ONLY=true`, `health_monitor_only: true` | `role: health-monitor` |
+| `HEALTH_ALERTS_ENABLED`, `health_alerts_enabled` | `role: health-monitor` for the health container; `health_alerts: true` on a forwarder that should also alert (now off by default) |
+| `WHATSAPP_HOOK_URL` | `webhook_url` (now required) |
+| `WAHA_URL`, `waha_url` | `waha.url` |
+| `WAHA_SESSION`, `waha_session` | `waha.session` |
+| `waha_api_key`, `waha.api_key` | removed: the key comes only from `WAHA_API_KEY` in `.env` |
+| `TRANSPORT`, `transport` | `destination_transport` (and `source_transport` if needed) |
+| `SOURCE_TRANSPORT`, `DESTINATION_TRANSPORT` | `source_transport`, `destination_transport` |
+| `SOURCE_CHAT_ID`, `TARGET_CHAT_ID` | `source_chat_id`, `target_chat_id` |
+| `ALERT_CHAT_ID` | `alert_chat_id` (no longer falls back to `target_chat_id`) |
+| `LISTEN_PORT`, `LOG_LEVEL`, `INCLUDE_FROM_ME` | `listen_port`, `log_level`, `include_from_me` |
+| `MATRIX_HOMESERVER_URL`, `matrix_homeserver_url` | `matrix.homeserver_url` |
+| `MATRIX_ACCESS_TOKEN`, `matrix_access_token` | `matrix.access_token` |
+
+If a route was renamed in the past (for example `courier-lupynis` became `courier-tfl` in 0.4.0), its old webhook entry may still be registered in the WAHA session, and WAHA keeps trying to deliver to it. Courier removes only the old `http://courier:8000/webhook` entry. List the registered URLs with:
+
+```bash
+curl -s -H "X-Api-Key: $WAHA_API_KEY" http://127.0.0.1:3000/api/sessions/default | jq '.config.webhooks[].url'
+```
+
+and remove stale entries from the session's config (for example with `PUT /api/sessions/{session}` in WAHA's Swagger UI).
 
 ## Development
 
@@ -592,9 +670,15 @@ uv run ruff format --check .
 docker compose config --quiet
 ```
 
-The Compose validation command may print warnings if optional deployment variables such as `SOURCE_CHAT_ID` or `TARGET_CHAT_ID` are unset in the local environment. Those variables are required for a configured deployment.
+Compose validation needs WAHA's variables; locally, copy `.env.example` to `.env` first.
 
-Run the service locally with `uv run python -m courier.main`. The configuration file defaults to `config.yaml`; see [Configuration reference](#configuration-reference).
+After changing the config models in `courier/config/model.py`, regenerate the editor schema and commit it; a test fails while the committed schema is out of date:
+
+```bash
+uv run python -m courier.config.schema
+```
+
+Run the service locally with `WAHA_API_KEY=... uv run python -m courier.main`. The configuration file defaults to `config.yaml`; see [Configuration reference](#configuration-reference).
 
 ## Project structure
 
@@ -606,7 +690,11 @@ courier/
     waha_ingress.py    # WAHA webhook events -> forwarder and health monitor
     waha_media.py      # lazy WAHA media references and origin-checked downloads
     waha_payload.py    # WAHA message payload parsing
-  config/              # YAML and environment configuration
+  config/
+    model.py           # the config file's keys, per role (Pydantic models)
+    loader.py          # reads the file and reports every problem at once
+    migration.py       # settings retired in 0.9.0 and where they moved
+    schema.py          # generates courier-config.schema.json for editors
   core/
     domain.py          # Message, Attachment, MediaRef
     filters.py
@@ -616,6 +704,8 @@ courier/
     ports.py
   infrastructure/      # webhook HTTP server and logging context
   main.py
+examples/              # annotated configs per role, and the Compose deployment's three files
+courier-config.schema.json  # editor schema generated from config/model.py
 tests/
 ```
 

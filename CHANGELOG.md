@@ -2,6 +2,19 @@
 
 Notable changes to Courier are documented here. This changelog follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use Semantic Versioning.
 
+## [0.9.0] - 2026-11-23
+
+### Changed
+
+- **Breaking:** each Courier container is configured by exactly one YAML file. Courier reads no environment variables except `WAHA_API_KEY` and `CONFIG_PATH`; see "Migrating from 0.8.x" in the README.
+- **Breaking:** a required `role` key (`forwarder` or `health-monitor`) replaces `health_alerts_enabled` and `health_monitor_only`. A health monitor accepts no forwarding keys; a forwarder sends health alerts only with `health_alerts: true` (previously on by default).
+- **Breaking:** `webhook_url` is required, and `alert_chat_id` no longer falls back to `target_chat_id`.
+- **Breaking:** each setting has one spelling: `waha.url`, `waha.session`, `matrix.homeserver_url`, and `matrix.access_token`. The legacy `transport` key and the WAHA API key in YAML are gone.
+- Reject unknown or misspelled keys, keys that do not apply to the container's role, and pre-0.9.0 environment variables and keys, with a hint saying where each setting moved. Every problem in the file is reported at once.
+- `.env` holds only WAHA's settings and `COURIER_TAG`; Compose passes only `WAHA_API_KEY` to Courier containers.
+- Validate configuration with Pydantic v2, a new runtime dependency.
+- Add annotated example configs per role and for the Compose deployment, and a JSON Schema (`courier-config.schema.json`) for editor autocomplete and validation.
+
 ## [0.8.1] - 2026-11-23
 
 ### Fixed

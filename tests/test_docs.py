@@ -1,4 +1,6 @@
 import json
+import re
+import textwrap
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -65,6 +67,21 @@ def test_every_schema_property_is_documented():
     undocumented = [name for name, prop in iter_properties(config_json_schema()) if "description" not in prop]
 
     assert undocumented == []
+
+
+def complete_readme_configs() -> list[str]:
+    blocks = re.findall(r"```yaml\n(.*?)```", Path("README.md").read_text(encoding="utf-8"), flags=re.S)
+    return [block for block in blocks if re.search(r"^\s*role:", block, flags=re.M)]
+
+
+def test_every_complete_readme_config_loads(tmp_path):
+    blocks = complete_readme_configs()
+
+    assert len(blocks) >= 5  # two routing examples + three deployment configs
+    for index, block in enumerate(blocks):
+        path = tmp_path / f"readme-{index}.yaml"
+        path.write_text(textwrap.dedent(block), encoding="utf-8")
+        load_config(path, environ={})
 
 
 def test_schema_accepts_comma_separated_strings_for_list_keys():
