@@ -21,6 +21,14 @@ def test_only_dedicated_health_container_sends_health_alerts():
     assert compose["services"]["courier-health"]["environment"]["HEALTH_MONITOR_ONLY"] is True
 
 
+def test_dedicated_health_container_uses_its_own_config():
+    compose = yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))
+
+    assert compose["services"]["courier-health"]["volumes"] == [
+        "./config-health.yaml:/app/config.yaml:ro",
+    ]
+
+
 def test_waha_does_not_print_qr_codes_to_logs():
     compose = yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))
 

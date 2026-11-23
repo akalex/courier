@@ -2,6 +2,12 @@
 
 Notable changes to Courier are documented here. This changelog follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use Semantic Versioning.
 
+## [0.7.0] - 2026-11-23
+
+### Fixed
+
+- Mount `config-health.yaml` for the dedicated `courier-health` Compose container instead of sharing `config.yaml`.
+
 ## [0.6.1] - 2026-11-22
 
 ### Fixed

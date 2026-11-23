@@ -61,7 +61,7 @@ services:
     <<: *courier-common
     container_name: courier-health
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
+      - ./config-health.yaml:/app/config.yaml:ro
     environment:
       <<: *courier-environment
       WHATSAPP_HOOK_URL: http://courier-health:8000/webhook

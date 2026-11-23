@@ -184,6 +184,8 @@ filters:
 | Source chat ID | `SOURCE_CHAT_ID` | `source_chat_id` | Required |
 | Destination chat/room ID | `TARGET_CHAT_ID` | `target_chat_id` | Required; for Matrix use the room ID, e.g. `!roomid:example.org` |
 | Health alert chat/room ID | `ALERT_CHAT_ID` | `alert_chat_id` | Defaults to `TARGET_CHAT_ID`; for WAHA use the recipient chat ID, e.g. `15551234567@c.us` |
+| Health notifications | `HEALTH_ALERTS_ENABLED` | `health_alerts_enabled` | `true`; set to `false` on forwarding containers |
+| Health-monitor-only mode | `HEALTH_MONITOR_ONLY` | `health_monitor_only` | `false`; requires health alerts to be enabled |
 | Webhook listen port | `LISTEN_PORT` | `listen_port` | `8000`; must be a positive integer |
 | Log level | `LOG_LEVEL` | `log_level` | `INFO`; must be a recognized Python logging level |
 | WAHA base URL | `WAHA_URL` | `waha_url` or `waha.url` | `http://localhost:3000` |
@@ -207,7 +209,15 @@ For a Matrix destination, `TARGET_CHAT_ID` is the Matrix room ID, and the Matrix
 
 `max_attachment_size`, content selection, media types, and filter values are configured in YAML; they have no environment-variable overrides. Unknown transport names and invalid typed settings fail during startup. For WhatsApp-to-WhatsApp routes, `INCLUDE_FROM_ME` requires distinct source and target chat IDs to avoid loops. Filter order/combination is: the message must pass at least one configured include criterion (keyword or sender), if any are configured, and must not match any excluded keyword. When only exclusions are configured, all messages without excluded terms are eligible.
 
-The Compose deployment defines two routes: `courier-aircraft-losses` keeps the existing `config.yaml` behavior, while `courier-tfl` uses `config-tfl.yaml` to forward only video attachments. Both extend the shared `x-courier-common` settings, including `ALERT_CHAT_ID`. To send health alerts to one predictable recipient, set `ALERT_CHAT_ID` in `.env` to that WAHA chat ID, then recreate the Courier containers with `docker compose up -d --force-recreate courier-aircraft-losses courier-tfl`. To add another route, for example `courier-blink`, add another service that extends the same template, mounts its own config file, and sets its own webhook URL and chat IDs. Give each route unique chat-ID environment variables and a webhook URL using its Compose service name; all routes can share the same WAHA session and internal listen port.
+The Compose deployment defines two forwarding routes and a dedicated health monitor: `courier-aircraft-losses` keeps the existing `config.yaml` behavior, `courier-tfl` uses `config-tfl.yaml` to forward only video attachments, and `courier-health` uses `config-health.yaml`. Put courier-health-specific settings in `config-health.yaml`:
+
+```yaml
+health_alerts_enabled: true
+health_monitor_only: true
+alert_chat_id: "15551234567@c.us"
+```
+
+Keep `health_alerts_enabled: false` on forwarding-only route configs. Environment variables override these YAML values, so the Compose deployment also sets `HEALTH_ALERTS_ENABLED` and `HEALTH_MONITOR_ONLY` explicitly. All containers extend the shared `x-courier-common` settings, including `ALERT_CHAT_ID`. To send health alerts to one predictable recipient, set `ALERT_CHAT_ID` in `.env` to that WAHA chat ID, then recreate the Courier containers with `docker compose up -d --force-recreate courier-aircraft-losses courier-tfl courier-health`. To add another route, for example `courier-blink`, add another service that extends the same template, mounts its own config file, and sets its own webhook URL and chat IDs. Give each route unique chat-ID environment variables and a webhook URL using its Compose service name; all routes can share the same WAHA session and internal listen port.
 
 ## Run locally
 
