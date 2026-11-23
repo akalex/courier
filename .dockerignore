@@ -1,0 +1,13 @@
+# Keep local secrets and state out of images built from a working checkout.
+.env
+.env.*
+/config*.yaml
+waha-data
+.git
+.venv
+.superpowers
+docs/superpowers
+__pycache__
+.mypy_cache
+.ruff_cache
+.pytest_cache

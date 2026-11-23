@@ -75,6 +75,9 @@ docs/_build/
 # Local design and planning notes (kept out of the public repository)
 docs/superpowers/
 
+# Local Courier configs can hold secrets such as a Matrix access token; tracked examples live in examples/
+/config*.yaml
+
 # PyBuilder
 .pybuilder/
 target/

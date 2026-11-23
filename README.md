@@ -206,7 +206,7 @@ For a Matrix destination, `target_chat_id` (and `alert_chat_id`, if alerts go to
 Courier publishes a JSON Schema for its config files. In VS Code with the [Red Hat YAML extension](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml), make this the first line of a config file to get autocomplete, a description of each key on hover, and errors highlighted as you type:
 
 ```text
-# yaml-language-server: $schema=https://raw.githubusercontent.com/akalex/courier/0.9.0/courier-config.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/akalex/courier/0.9.1/courier-config.schema.json
 ```
 
 Use the version that matches your `COURIER_TAG`. This also works when editing files on the VM over Remote-SSH. The files in [examples/](examples/) point at the schema in this repository.
@@ -305,7 +305,7 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
 4. `.env` belongs to WAHA. The only Courier line it holds is the image tag every Courier container runs. Add it to the generated file:
 
    ```bash
-   echo "COURIER_TAG=0.9.0" >> .env
+   echo "COURIER_TAG=0.9.1" >> .env
    ```
 
    Use an exact version for a reproducible deployment, or `latest` to follow the newest release. Everything else Courier needs goes in its YAML files; compare with [.env.example](.env.example).
@@ -315,7 +315,7 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
    `config.yaml` (`courier-aircraft-losses`, forwards messages that mention `urgent` or `alert`):
 
    ```yaml
-   # yaml-language-server: $schema=https://raw.githubusercontent.com/akalex/courier/0.9.0/courier-config.schema.json
+   # yaml-language-server: $schema=https://raw.githubusercontent.com/akalex/courier/0.9.1/courier-config.schema.json
    role: forwarder
    webhook_url: http://courier-aircraft-losses:8000/webhook
 
@@ -337,7 +337,7 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
    `config-tfl.yaml` (`courier-tfl`, forwards only video attachments, without captions):
 
    ```yaml
-   # yaml-language-server: $schema=https://raw.githubusercontent.com/akalex/courier/0.9.0/courier-config.schema.json
+   # yaml-language-server: $schema=https://raw.githubusercontent.com/akalex/courier/0.9.1/courier-config.schema.json
    role: forwarder
    webhook_url: http://courier-tfl:8000/webhook
 
@@ -355,7 +355,7 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
    `config-health.yaml` (`courier-health`, the only container that sends health alerts):
 
    ```yaml
-   # yaml-language-server: $schema=https://raw.githubusercontent.com/akalex/courier/0.9.0/courier-config.schema.json
+   # yaml-language-server: $schema=https://raw.githubusercontent.com/akalex/courier/0.9.1/courier-config.schema.json
    role: health-monitor
    webhook_url: http://courier-health:8000/webhook
    alert_chat_id: "15551234567@c.us"
@@ -622,8 +622,8 @@ Courier listens for inbound webhook events on `/webhook` at its `listen_port`. E
 0.9.0 moves every Courier setting into the container's YAML file. Started with a 0.8.x setup, Courier 0.9.0 refuses to start and lists each setting to move, but you can migrate in one pass:
 
 1. Back up `.env`, the YAML files, and `docker-compose.yml`.
-2. In `.env`, delete the Courier lines: `TRANSPORT`, `WAHA_URL`, `WAHA_SESSION`, `LOG_LEVEL`, `LISTEN_PORT`, `INCLUDE_FROM_ME`, and any `SOURCE_CHAT_ID`, `TARGET_CHAT_ID`, `ALERT_CHAT_ID`, `HEALTH_*`, or `MATRIX_*` lines. Keep the WAHA lines and `COURIER_TAG`, and set `COURIER_TAG=0.9.0`.
-3. Rewrite each YAML file with `role`, `webhook_url`, and a `waha` section, moving values over with the table below. The three Compose files are shown in full in step 5 of the [deployment walkthrough](#vm-deployment-with-waha).
+2. Rewrite each YAML file with `role`, `webhook_url`, and a `waha` section, copying values over from `.env` and `docker-compose.yml` with the table below. Copy `WAHA_SESSION` into every file's `waha.session` if it isn't `default`: a container left on `default` would create and start a new, unlinked WAHA session. The three Compose files are shown in full in step 5 of the [deployment walkthrough](#vm-deployment-with-waha).
+3. Only then, in `.env`, delete the Courier lines: `TRANSPORT`, `WAHA_URL`, `WAHA_SESSION`, `LOG_LEVEL`, `LISTEN_PORT`, `INCLUDE_FROM_ME`, and any `SOURCE_CHAT_ID`, `TARGET_CHAT_ID`, `ALERT_CHAT_ID`, `HEALTH_*`, or `MATRIX_*` lines. Keep the WAHA lines and `COURIER_TAG`, and set `COURIER_TAG` to the 0.9 release you are deploying.
 4. Replace `docker-compose.yml` with the one in step 6.
 5. Run `docker compose pull && docker compose up -d --force-recreate` and check each Courier container's log.
 

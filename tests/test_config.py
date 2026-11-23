@@ -194,3 +194,35 @@ def test_cross_field_rule_is_reported_in_plain_words(tmp_path):
     problems = problems_for(write(tmp_path, FORWARDER_YAML + "health_alerts: true\n"))
 
     assert problems == (f"{tmp_path / 'config.yaml'}: alert_chat_id is required when health_alerts is true",)
+
+
+def test_missing_role_still_reports_the_other_problems(tmp_path):
+    problems = problems_for(write(tmp_path, "source_chat_id: src@g.us\ntarget_chat_id: dst@g.us\ncolour: red\n"))
+
+    assert any("`role` is required" in line for line in problems)
+    assert any("unknown key `colour`" in line for line in problems)
+    assert any("`webhook_url` is required" in line and "`forwarder`" in line for line in problems)
+
+
+def test_missing_role_without_role_specific_keys_still_reports_unknown_keys(tmp_path):
+    problems = problems_for(write(tmp_path, "webhook_url: http://c:8000/webhook\ncolour: red\n"))
+
+    assert len(problems) == 2
+    assert any("unknown key `colour`" in line for line in problems)
+
+
+def test_duplicate_keys_are_reported_instead_of_silently_overridden(tmp_path):
+    text = FORWARDER_YAML + "log_level: INFO\nlog_level: DEBUG\nfilters:\n  keywords: [a]\n  keywords: [b]\n"
+
+    problems = problems_for(write(tmp_path, text))
+
+    assert any("`log_level` appears more than once" in line and "line 6" in line for line in problems)
+    assert any("`keywords` appears more than once" in line and "line 9" in line for line in problems)
+
+
+def test_yaml_syntax_error_names_the_line_without_echoing_file_contents(tmp_path):
+    problems = problems_for(write(tmp_path, "role: forwarder\nmatrix:\n  access_token: syt_SECRET: oops\n"))
+
+    assert len(problems) == 1
+    assert "syt_SECRET" not in problems[0]
+    assert "line 3" in problems[0]
