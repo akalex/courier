@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=../courier-config.schema.json
+#
+# A health-monitor container: watches the WAHA session, sends an alert when it stops, fails, or needs a
+# QR scan, and a recovery message when it is back. It forwards nothing, so it has no chats or filters.
+# Mount this file at /app/config.yaml; the only value Courier takes from .env is WAHA_API_KEY.
+
+role: health-monitor
+
+# URL WAHA calls to deliver session status events to this container.
+webhook_url: http://courier-health:8000/webhook
+
+# Who receives health and recovery alerts.
+alert_chat_id: "15551234567@c.us"
+
+# How Courier reaches WAHA.
+waha:
+  url: http://waha:3000
+  session: default
+
+# Optional settings, shown with their defaults:
+# listen_port: 8000                          # port Courier listens on inside the container
+# log_level: INFO                            # DEBUG, INFO, WARNING, ERROR, or CRITICAL
+# destination_transport: waha                # how alerts are sent: waha or matrix
+# matrix:                                    # required only when destination_transport is matrix
+#   homeserver_url: https://matrix.example.org
+#   access_token: your-matrix-access-token  # secret: keep this file private (chmod 600)

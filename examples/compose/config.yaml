@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=../../courier-config.schema.json
+#
+# courier-aircraft-losses: forwards messages that mention "urgent" or "alert".
+# Replace the two chat IDs with your real group IDs (see "Find chat IDs" in the README).
+
+role: forwarder
+webhook_url: http://courier-aircraft-losses:8000/webhook
+
+waha:
+  url: http://waha:3000
+  session: default
+
+source_chat_id: "120363000000000011@g.us"
+target_chat_id: "120363000000000012@g.us"
+
+filters:
+  keywords:
+    - urgent
+    - alert

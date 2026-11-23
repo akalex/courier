@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=../../courier-config.schema.json
+#
+# courier-health: the only container that watches the WAHA session and sends health alerts.
+# Replace alert_chat_id with the WhatsApp chat that should receive them.
+
+role: health-monitor
+webhook_url: http://courier-health:8000/webhook
+alert_chat_id: "15551234567@c.us"
+
+waha:
+  url: http://waha:3000
+  session: default

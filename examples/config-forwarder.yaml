@@ -1,0 +1,38 @@
+# yaml-language-server: $schema=../courier-config.schema.json
+#
+# A forwarding container: forwards messages from one WhatsApp chat to one target chat.
+# Mount this file at /app/config.yaml. Every Courier setting lives in this file; the only value
+# Courier takes from .env is WAHA_API_KEY.
+
+role: forwarder
+
+# URL WAHA calls to deliver events to this container. Use the Compose service name; unique per container.
+webhook_url: http://courier-example:8000/webhook
+
+# How Courier reaches WAHA.
+waha:
+  url: http://waha:3000
+  session: default
+
+# Chat messages are forwarded from, and the chat (or Matrix room) they are forwarded to.
+source_chat_id: "120363000000000001@g.us"
+target_chat_id: "120363000000000002@g.us"
+
+# Optional settings, shown with their defaults:
+# listen_port: 8000                          # port Courier listens on inside the container
+# log_level: INFO                            # DEBUG, INFO, WARNING, ERROR, or CRITICAL
+# destination_transport: waha                # where messages go: waha or matrix
+# matrix:                                    # required only when destination_transport is matrix
+#   homeserver_url: https://matrix.example.org
+#   access_token: your-matrix-access-token  # secret: keep this file private (chmod 600)
+# source_transport: waha                     # only waha is supported
+# include_from_me: false                     # also forward messages sent by the linked account
+# forward_content: [text, media]             # text, media, or both
+# media_types: [image, video, audio, file]   # attachment kinds to forward
+# max_attachment_size: 20971520              # bytes; larger attachments are skipped, text is still sent
+# filters:                                   # no filters: every message from the source chat is forwarded
+#   keywords: []                             # forward if the text contains any of these (case-insensitive)
+#   exclude_keywords: []                     # never forward if the text contains any of these
+#   senders: []                              # forward if sent by any of these IDs or names (OR with keywords)
+# health_alerts: false                       # also send WAHA health alerts; normally the health monitor does this
+# alert_chat_id: "15551234567@c.us"          # required only when health_alerts is true

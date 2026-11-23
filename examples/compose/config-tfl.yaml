@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=../../courier-config.schema.json
+#
+# courier-tfl: forwards only video attachments, without captions.
+# Replace the two chat IDs with your real group IDs (see "Find chat IDs" in the README).
+
+role: forwarder
+webhook_url: http://courier-tfl:8000/webhook
+
+waha:
+  url: http://waha:3000
+  session: default
+
+source_chat_id: "120363000000000021@g.us"
+target_chat_id: "120363000000000022@g.us"
+
+forward_content: [media]
+media_types: [video]

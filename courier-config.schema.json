@@ -1,0 +1,379 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Courier container config",
+  "$defs": {
+    "FilterSettings": {
+      "additionalProperties": false,
+      "description": "Which source-chat messages are forwarded. With no filters, every message is eligible.",
+      "properties": {
+        "keywords": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": [],
+          "description": "Forward a message whose text contains any of these words (case-insensitive). A list or a comma-separated string.",
+          "title": "Keywords"
+        },
+        "exclude_keywords": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": [],
+          "description": "Never forward a message whose text contains any of these words (case-insensitive), even if it matches keywords or senders.",
+          "title": "Exclude Keywords"
+        },
+        "senders": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": [],
+          "description": "Forward a message from any of these sender IDs or names. Combined with keywords using OR: matching either is enough.",
+          "title": "Senders"
+        }
+      },
+      "title": "FilterSettings",
+      "type": "object"
+    },
+    "ForwarderConfig": {
+      "additionalProperties": false,
+      "description": "A container that forwards messages from one source chat to one target chat.",
+      "properties": {
+        "webhook_url": {
+          "description": "URL WAHA calls to deliver events to this container, for example http://courier-tfl:8000/webhook. Must be unique per container.",
+          "minLength": 1,
+          "title": "Webhook Url",
+          "type": "string"
+        },
+        "listen_port": {
+          "default": 8000,
+          "description": "Port Courier listens on inside the container; must match the port in webhook_url unless a proxy sits in between.",
+          "exclusiveMinimum": 0,
+          "title": "Listen Port",
+          "type": "integer"
+        },
+        "log_level": {
+          "default": "INFO",
+          "description": "Python log level: DEBUG, INFO, WARNING, ERROR, or CRITICAL.",
+          "title": "Log Level",
+          "type": "string"
+        },
+        "waha": {
+          "$ref": "#/$defs/WahaSettings",
+          "default": {
+            "url": "http://localhost:3000",
+            "session": "default"
+          },
+          "description": "How Courier reaches WAHA."
+        },
+        "destination_transport": {
+          "default": "waha",
+          "description": "Where messages and alerts are sent: waha (WhatsApp) or matrix.",
+          "enum": [
+            "waha",
+            "matrix"
+          ],
+          "title": "Destination Transport",
+          "type": "string"
+        },
+        "matrix": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MatrixSettings"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Matrix account settings; required when destination_transport is matrix, rejected otherwise."
+        },
+        "role": {
+          "const": "forwarder",
+          "description": "What this container does: forwarder or health-monitor.",
+          "title": "Role",
+          "type": "string"
+        },
+        "source_transport": {
+          "const": "waha",
+          "default": "waha",
+          "description": "Where messages come from; only waha is supported.",
+          "title": "Source Transport",
+          "type": "string"
+        },
+        "source_chat_id": {
+          "description": "WhatsApp chat ID messages are forwarded from, e.g. 1203\u2026@g.us.",
+          "minLength": 1,
+          "title": "Source Chat Id",
+          "type": "string"
+        },
+        "target_chat_id": {
+          "description": "Chat or room ID messages are forwarded to: a WhatsApp chat ID, or a Matrix room ID such as !roomid:example.org.",
+          "minLength": 1,
+          "title": "Target Chat Id",
+          "type": "string"
+        },
+        "include_from_me": {
+          "default": false,
+          "description": "Also forward messages sent by the linked WhatsApp account. For WhatsApp-to-WhatsApp routes, source and target must then differ.",
+          "title": "Include From Me",
+          "type": "boolean"
+        },
+        "forward_content": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "text",
+                  "media"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": [
+            "text",
+            "media"
+          ],
+          "description": "What to forward: text, media, or both. A media-only route drops captions.",
+          "minLength": 1,
+          "title": "Forward Content"
+        },
+        "media_types": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "image",
+                  "video",
+                  "audio",
+                  "file"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": [
+            "image",
+            "video",
+            "audio",
+            "file"
+          ],
+          "description": "Attachment kinds to forward when media is forwarded: image, video, audio, file.",
+          "minLength": 1,
+          "title": "Media Types"
+        },
+        "max_attachment_size": {
+          "default": 20971520,
+          "description": "Largest attachment in bytes; larger ones are skipped (the text is still sent).",
+          "exclusiveMinimum": 0,
+          "title": "Max Attachment Size",
+          "type": "integer"
+        },
+        "filters": {
+          "$ref": "#/$defs/FilterSettings",
+          "default": {
+            "keywords": [],
+            "exclude_keywords": [],
+            "senders": []
+          },
+          "description": "Which messages are forwarded."
+        },
+        "health_alerts": {
+          "default": false,
+          "description": "Also watch WAHA session health and send alerts to alert_chat_id. Normally the health-monitor container does this.",
+          "title": "Health Alerts",
+          "type": "boolean"
+        },
+        "alert_chat_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Chat or room that receives health alerts; required when health_alerts is true, rejected otherwise.",
+          "title": "Alert Chat Id"
+        }
+      },
+      "required": [
+        "webhook_url",
+        "role",
+        "source_chat_id",
+        "target_chat_id"
+      ],
+      "title": "ForwarderConfig",
+      "type": "object"
+    },
+    "HealthMonitorConfig": {
+      "additionalProperties": false,
+      "description": "A container that only watches WAHA session health and sends alerts; it forwards nothing.",
+      "properties": {
+        "webhook_url": {
+          "description": "URL WAHA calls to deliver events to this container, for example http://courier-tfl:8000/webhook. Must be unique per container.",
+          "minLength": 1,
+          "title": "Webhook Url",
+          "type": "string"
+        },
+        "listen_port": {
+          "default": 8000,
+          "description": "Port Courier listens on inside the container; must match the port in webhook_url unless a proxy sits in between.",
+          "exclusiveMinimum": 0,
+          "title": "Listen Port",
+          "type": "integer"
+        },
+        "log_level": {
+          "default": "INFO",
+          "description": "Python log level: DEBUG, INFO, WARNING, ERROR, or CRITICAL.",
+          "title": "Log Level",
+          "type": "string"
+        },
+        "waha": {
+          "$ref": "#/$defs/WahaSettings",
+          "default": {
+            "url": "http://localhost:3000",
+            "session": "default"
+          },
+          "description": "How Courier reaches WAHA."
+        },
+        "destination_transport": {
+          "default": "waha",
+          "description": "Where messages and alerts are sent: waha (WhatsApp) or matrix.",
+          "enum": [
+            "waha",
+            "matrix"
+          ],
+          "title": "Destination Transport",
+          "type": "string"
+        },
+        "matrix": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MatrixSettings"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Matrix account settings; required when destination_transport is matrix, rejected otherwise."
+        },
+        "role": {
+          "const": "health-monitor",
+          "description": "What this container does: forwarder or health-monitor.",
+          "title": "Role",
+          "type": "string"
+        },
+        "alert_chat_id": {
+          "description": "Chat or room that receives health and recovery alerts.",
+          "minLength": 1,
+          "title": "Alert Chat Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "webhook_url",
+        "role",
+        "alert_chat_id"
+      ],
+      "title": "HealthMonitorConfig",
+      "type": "object"
+    },
+    "MatrixSettings": {
+      "additionalProperties": false,
+      "description": "The Matrix account that posts messages when destination_transport is matrix.",
+      "properties": {
+        "homeserver_url": {
+          "description": "Matrix homeserver URL, for example https://matrix.example.org.",
+          "minLength": 1,
+          "title": "Homeserver Url",
+          "type": "string"
+        },
+        "access_token": {
+          "description": "Access token of the Matrix account that posts messages. Secret: keep this file private.",
+          "minLength": 1,
+          "title": "Access Token",
+          "type": "string"
+        }
+      },
+      "required": [
+        "homeserver_url",
+        "access_token"
+      ],
+      "title": "MatrixSettings",
+      "type": "object"
+    },
+    "WahaSettings": {
+      "additionalProperties": false,
+      "description": "How Courier reaches WAHA. The API key is not set here: it comes from WAHA_API_KEY in .env.",
+      "properties": {
+        "url": {
+          "default": "http://localhost:3000",
+          "description": "Base URL Courier uses to call WAHA; under Docker Compose this is http://waha:3000.",
+          "minLength": 1,
+          "title": "Url",
+          "type": "string"
+        },
+        "session": {
+          "default": "default",
+          "description": "WAHA session (the linked WhatsApp account) this container uses.",
+          "minLength": 1,
+          "title": "Session",
+          "type": "string"
+        }
+      },
+      "title": "WahaSettings",
+      "type": "object"
+    }
+  },
+  "discriminator": {
+    "mapping": {
+      "forwarder": "#/$defs/ForwarderConfig",
+      "health-monitor": "#/$defs/HealthMonitorConfig"
+    },
+    "propertyName": "role"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/ForwarderConfig"
+    },
+    {
+      "$ref": "#/$defs/HealthMonitorConfig"
+    }
+  ]
+}

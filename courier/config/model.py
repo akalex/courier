@@ -49,16 +49,21 @@ def _known_log_level(value: str) -> str:
 
 
 NonEmptyStr = Annotated[str, Field(min_length=1)]
-StringList = Annotated[tuple[str, ...], BeforeValidator(_as_list)]
+# json_schema_input_type makes the editor schema describe what a config file may contain (a list or a
+# comma-separated string), not the tuple Courier stores after parsing.
+StringList = Annotated[tuple[str, ...], BeforeValidator(_as_list, json_schema_input_type=list[str] | str)]
 LogLevel = Annotated[str, BeforeValidator(_uppercase), AfterValidator(_known_log_level)]
 ForwardContent = Annotated[
     tuple[Literal["text", "media"], ...],
-    BeforeValidator(_as_unique_lowercase_list),
+    BeforeValidator(_as_unique_lowercase_list, json_schema_input_type=list[Literal["text", "media"]] | str),
     Field(min_length=1),
 ]
 MediaTypes = Annotated[
     tuple[Literal["image", "video", "audio", "file"], ...],
-    BeforeValidator(_as_unique_lowercase_list),
+    BeforeValidator(
+        _as_unique_lowercase_list,
+        json_schema_input_type=list[Literal["image", "video", "audio", "file"]] | str,
+    ),
     Field(min_length=1),
 ]
 DestinationTransport = Annotated[Literal["waha", "matrix"], BeforeValidator(_lowercase)]
