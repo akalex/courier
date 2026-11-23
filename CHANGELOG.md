@@ -2,6 +2,13 @@
 
 Notable changes to Courier are documented here. This changelog follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use Semantic Versioning.
 
+## [0.8.0] - 2026-11-23
+
+### Changed
+
+- Configure route-specific source and destination chat IDs in each mounted YAML config file instead of route-specific environment variables.
+- Remove shared route chat-ID variables from `.env.example` and document YAML-only route configuration for Compose deployments.
+
 ## [0.7.0] - 2026-11-23
 
 ### Fixed

@@ -55,7 +55,7 @@ uv sync --dev
 4. WAHA sends events to Courier's `POST /webhook` endpoint.
 5. Courier ignores events outside the configured source chat and applies filters before downloading any media. It downloads media only when it can match the selected media types, then sends the message to the configured destination.
 
-Courier also sends health notifications when the WAHA session stops, fails, or needs QR authentication, or when the WAHA API becomes unavailable. It checks worker/session health every 30 seconds and sends a recovery notification after service resumes. Set `ALERT_CHAT_ID` (or `alert_chat_id`) to choose a fixed recipient; when set, health alerts go only to that recipient, not to a route's `TARGET_CHAT_ID`. The Compose deployment passes the same `ALERT_CHAT_ID` to all Courier containers. If unset, each container defaults to its own `TARGET_CHAT_ID`. For a WAHA destination, use the recipient's WAHA chat ID, such as `15551234567@c.us`.
+Courier also sends health notifications when the WAHA session stops, fails, or needs QR authentication, or when the WAHA API becomes unavailable. It checks worker/session health every 30 seconds and sends a recovery notification after service resumes. Set `alert_chat_id` in `config-health.yaml` to choose a fixed recipient; when set, health alerts go only to that recipient, not to a route's `TARGET_CHAT_ID`. The Compose deployment passes the same `ALERT_CHAT_ID` to all Courier containers. If unset, each container defaults to its own `TARGET_CHAT_ID`. For a WAHA destination, use the recipient's WAHA chat ID, such as `15551234567@c.us`.
 
 In the default multi-route Compose deployment, `courier-health` is the dedicated health-monitor container and is the only Courier service that sends health notifications. It runs with `HEALTH_MONITOR_ONLY=true`, so it subscribes only to `session.status` and never receives or downloads messages. `HEALTH_MONITOR_ONLY` requires `HEALTH_ALERTS_ENABLED`; Courier refuses to start with health-monitor-only mode and alerts disabled. The forwarding routes disable `HEALTH_ALERTS_ENABLED`, so they do not subscribe to `session.status`. Standalone Courier instances default to sending health alerts.
 
@@ -209,7 +209,7 @@ For a Matrix destination, `TARGET_CHAT_ID` is the Matrix room ID, and the Matrix
 
 `max_attachment_size`, content selection, media types, and filter values are configured in YAML; they have no environment-variable overrides. Unknown transport names and invalid typed settings fail during startup. For WhatsApp-to-WhatsApp routes, `INCLUDE_FROM_ME` requires distinct source and target chat IDs to avoid loops. Filter order/combination is: the message must pass at least one configured include criterion (keyword or sender), if any are configured, and must not match any excluded keyword. When only exclusions are configured, all messages without excluded terms are eligible.
 
-The Compose deployment defines two forwarding routes and a dedicated health monitor: `courier-aircraft-losses` keeps the existing `config.yaml` behavior, `courier-tfl` uses `config-tfl.yaml` to forward only video attachments, and `courier-health` uses `config-health.yaml`. Put courier-health-specific settings in `config-health.yaml`:
+The Compose deployment defines two forwarding routes and a dedicated health monitor: `courier-aircraft-losses` keeps the existing `config.yaml` behavior, `courier-tfl` uses `config-tfl.yaml` to forward only video attachments, and `courier-health` uses `config-health.yaml`. Configure `source_chat_id` and `target_chat_id` in each route's YAML file. Put courier-health-specific settings in `config-health.yaml`:
 
 ```yaml
 health_alerts_enabled: true
@@ -217,7 +217,7 @@ health_monitor_only: true
 alert_chat_id: "15551234567@c.us"
 ```
 
-Keep `health_alerts_enabled: false` on forwarding-only route configs. Environment variables override these YAML values, so the Compose deployment also sets `HEALTH_ALERTS_ENABLED` and `HEALTH_MONITOR_ONLY` explicitly. All containers extend the shared `x-courier-common` settings, including `ALERT_CHAT_ID`. To send health alerts to one predictable recipient, set `ALERT_CHAT_ID` in `.env` to that WAHA chat ID, then recreate the Courier containers with `docker compose up -d --force-recreate courier-aircraft-losses courier-tfl courier-health`. To add another route, for example `courier-blink`, add another service that extends the same template, mounts its own config file, and sets its own webhook URL and chat IDs. Give each route unique chat-ID environment variables and a webhook URL using its Compose service name; all routes can share the same WAHA session and internal listen port.
+Keep `health_alerts_enabled: false` on forwarding-only route configs. Environment variables override these YAML values, so the Compose deployment also sets `HEALTH_ALERTS_ENABLED` and `HEALTH_MONITOR_ONLY` explicitly. All containers extend the shared `x-courier-common` settings. Configure the health recipient with `alert_chat_id` in `config-health.yaml`, then recreate the Courier containers with `docker compose up -d --force-recreate courier-aircraft-losses courier-tfl courier-health`. To add another route, for example `courier-blink`, add another service that extends the same template, mounts its own config file, and sets its own webhook URL and chat IDs in that config file. Use a unique webhook URL based on the Compose service name; all routes can share the same WAHA session and internal listen port.
 
 ## Run locally
 
@@ -304,10 +304,6 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
 
    ```dotenv
    WAHA_SESSION=default
-   SOURCE_CHAT_ID=replace-after-linking
-   TARGET_CHAT_ID=replace-after-linking
-   TFL_SOURCE_CHAT_ID=replace-after-linking
-   TFL_TARGET_CHAT_ID=replace-after-linking
    LOG_LEVEL=INFO
    LISTEN_PORT=8000
    COURIER_TAG=latest
@@ -373,8 +369,6 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
        environment:
          <<: *courier-environment
          WHATSAPP_HOOK_URL: http://courier-aircraft-losses:8000/webhook
-         SOURCE_CHAT_ID: ${SOURCE_CHAT_ID}
-         TARGET_CHAT_ID: ${TARGET_CHAT_ID}
 
      courier-tfl:
        <<: *courier-common
@@ -384,12 +378,10 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
        environment:
          <<: *courier-environment
          WHATSAPP_HOOK_URL: http://courier-tfl:8000/webhook
-         SOURCE_CHAT_ID: ${TFL_SOURCE_CHAT_ID}
-         TARGET_CHAT_ID: ${TFL_TARGET_CHAT_ID}
    EOF
    ```
 
-   To add `courier-blink`, copy the `courier-tfl` service block and rename the service and `container_name` to `courier-blink`. Mount `./config-blink.yaml`, set `WHATSAPP_HOOK_URL` to `http://courier-blink:8000/webhook`, and add `BLINK_SOURCE_CHAT_ID` and `BLINK_TARGET_CHAT_ID` to `.env`. The same pattern works for each additional route.
+   To add `courier-blink`, copy the `courier-tfl` service block and rename the service and `container_name` to `courier-blink`. Mount `./config-blink.yaml`, set `WHATSAPP_HOOK_URL` to `http://courier-blink:8000/webhook`, and configure `source_chat_id` and `target_chat_id` in `config-blink.yaml`. The same pattern works for each additional route.
 
 7. Start both services:
 

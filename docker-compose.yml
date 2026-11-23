@@ -9,7 +9,6 @@ x-courier-common: &courier-common
     WAHA_URL: http://waha:3000
     WAHA_API_KEY: ${WAHA_API_KEY:?Set WAHA_API_KEY in .env}
     WAHA_SESSION: ${WAHA_SESSION:-default}
-    ALERT_CHAT_ID: ${ALERT_CHAT_ID:-}
     LOG_LEVEL: ${LOG_LEVEL:-INFO}
     LISTEN_PORT: ${LISTEN_PORT:-8000}
     INCLUDE_FROM_ME: ${INCLUDE_FROM_ME:-}
@@ -41,8 +40,6 @@ services:
     environment:
       <<: *courier-environment
       WHATSAPP_HOOK_URL: http://courier-aircraft-losses:8000/webhook
-      SOURCE_CHAT_ID: ${SOURCE_CHAT_ID}
-      TARGET_CHAT_ID: ${TARGET_CHAT_ID}
       HEALTH_ALERTS_ENABLED: false
 
   courier-tfl:
@@ -53,8 +50,6 @@ services:
     environment:
       <<: *courier-environment
       WHATSAPP_HOOK_URL: http://courier-tfl:8000/webhook
-      SOURCE_CHAT_ID: ${TFL_SOURCE_CHAT_ID}
-      TARGET_CHAT_ID: ${TFL_TARGET_CHAT_ID}
       HEALTH_ALERTS_ENABLED: false
 
   courier-health:
@@ -65,7 +60,5 @@ services:
     environment:
       <<: *courier-environment
       WHATSAPP_HOOK_URL: http://courier-health:8000/webhook
-      SOURCE_CHAT_ID: ${SOURCE_CHAT_ID}
-      TARGET_CHAT_ID: ${TARGET_CHAT_ID}
       HEALTH_ALERTS_ENABLED: true
       HEALTH_MONITOR_ONLY: true
