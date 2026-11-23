@@ -11,7 +11,7 @@ from urllib.parse import quote
 import httpx
 
 from .. import __version__
-from ..config import AppConfig
+from ..config import WahaSettings
 from ..core.domain import Attachment
 from ..core.health import HealthObservation
 from ..core.media import is_mp4_attachment
@@ -180,23 +180,24 @@ def session_status_observation(session_name: str, status: str) -> HealthObservat
     return None
 
 
-def build_waha(config: AppConfig, *, transport: httpx.AsyncBaseTransport | None = None) -> WAHA:
-    """Construct the WAHA session client from application config.
+def build_waha(settings: WahaSettings, api_key: str, *, transport: httpx.AsyncBaseTransport | None = None) -> WAHA:
+    """Construct the WAHA session client.
 
     Args:
-        config: Validated application config.
+        settings: The container's WAHA settings (URL and session).
+        api_key: WAHA's API key from WAHA_API_KEY; empty when WAHA does not require one.
         transport: Optional httpx transport replacing the network, for tests.
     """
     headers = {"User-Agent": f"courier/{__version__}"}
-    if config.waha_api_key:
-        headers["X-Api-Key"] = config.waha_api_key
+    if api_key:
+        headers["X-Api-Key"] = api_key
     http = httpx.AsyncClient(
-        base_url=config.waha_url.rstrip("/"),
+        base_url=settings.url.rstrip("/"),
         headers=headers,
         timeout=httpx.Timeout(30.0, connect=10.0, read=20.0),
         transport=transport,
     )
-    return WAHA(base_url=config.waha_url, session_name=config.waha_session, http=http)
+    return WAHA(base_url=settings.url, session_name=settings.session, http=http)
 
 
 def _http_failure_observation(session_name: str, status_code: int) -> HealthObservation:

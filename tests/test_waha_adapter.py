@@ -6,7 +6,7 @@ import pytest
 
 from courier import __version__
 from courier.adapters.waha import WAHA, build_waha
-from courier.config import load_config
+from courier.config import WahaSettings
 from courier.core.domain import Attachment, TransientMediaError
 from courier.core.health import HealthObservation
 
@@ -436,28 +436,18 @@ async def test_provision_does_not_retry_client_errors():
 # --- construction from config ------------------------------------------------------------------------------------
 
 
-async def test_build_waha_identifies_courier_and_authenticates_with_api_key(tmp_path, monkeypatch):
-    for name in ("WAHA_URL", "WAHA_API_KEY", "WAHA_SESSION"):
-        monkeypatch.delenv(name, raising=False)
-    path = tmp_path / "config.yaml"
-    path.write_text(
-        """
-source_chat_id: source@g.us
-target_chat_id: target@g.us
-waha:
-  url: http://waha:3000
-  api_key: secret
-  session: demo
-""".strip(),
-        encoding="utf-8",
-    )
+async def test_build_waha_identifies_courier_and_authenticates_with_api_key():
     requests = []
 
     def handler(request):
         requests.append(request)
         return httpx.Response(201, request=request)
 
-    waha = build_waha(load_config(path), transport=httpx.MockTransport(handler))
+    waha = build_waha(
+        WahaSettings(url="http://waha:3000/", session="demo"),
+        "secret",
+        transport=httpx.MockTransport(handler),
+    )
     await waha.destination.send("target@g.us", "hello")
     await waha.aclose()
 

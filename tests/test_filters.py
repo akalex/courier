@@ -1,9 +1,25 @@
 import pytest
 
-from courier.config import load_config
+from courier.config import FilterSettings, ForwarderConfig, load_config
 from courier.core.domain import Message
 from courier.core.filters import AllOf, AnyOf, ExcludeKeywordFilter, KeywordFilter, SenderFilter
 from courier.main import build_filter_policy
+
+
+FORWARDER_YAML = """\
+role: forwarder
+webhook_url: http://courier:8000/webhook
+source_chat_id: source
+target_chat_id: target
+"""
+
+
+def _configured_filters(tmp_path, filters_yaml: str) -> FilterSettings:
+    path = tmp_path / "config.yaml"
+    path.write_text(FORWARDER_YAML + filters_yaml, encoding="utf-8")
+    config = load_config(path, environ={}).config
+    assert isinstance(config, ForwarderConfig)
+    return config.filters
 
 
 @pytest.mark.parametrize(
@@ -75,19 +91,8 @@ def test_excluded_keyword_rejects_even_when_an_allow_filter_matches():
     ],
 )
 def test_configured_filter_policy_applies_exclusions_as_vetoes(tmp_path, text, sender, expected):
-    path = tmp_path / "config.yaml"
-    path.write_text(
-        """
-source_chat_id: source
-target_chat_id: target
-filters:
-  keywords: [alert]
-  exclude_keywords: [city]
-  senders: [Alice]
-""".strip(),
-        encoding="utf-8",
-    )
-    policy = build_filter_policy(load_config(path))
+    filters_yaml = "filters:\n  keywords: [alert]\n  exclude_keywords: [city]\n  senders: [Alice]\n"
+    policy = build_filter_policy(_configured_filters(tmp_path, filters_yaml))
     message = Message(
         id="1",
         chat_id="source",
@@ -102,17 +107,7 @@ filters:
 
 
 def test_excluded_keywords_can_be_configured_without_include_filters(tmp_path):
-    path = tmp_path / "config.yaml"
-    path.write_text(
-        """
-source_chat_id: source
-target_chat_id: target
-filters:
-  exclude_keywords: [city]
-""".strip(),
-        encoding="utf-8",
-    )
-    policy = build_filter_policy(load_config(path))
+    policy = build_filter_policy(_configured_filters(tmp_path, "filters:\n  exclude_keywords: [city]\n"))
     allowed_message = Message(
         id="1",
         chat_id="source",

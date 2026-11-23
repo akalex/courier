@@ -7,7 +7,7 @@ from urllib.parse import quote
 import httpx
 
 from .. import __version__
-from ..config import AppConfig
+from ..config import MatrixSettings
 from ..core.domain import Attachment
 
 
@@ -96,9 +96,6 @@ class MatrixDestination:
         await self.client.aclose()
 
 
-def build_matrix_destination(config: AppConfig) -> MatrixDestination:
-    """Construct a Matrix destination from application configuration."""
-    return MatrixDestination(
-        homeserver_url=config.matrix_homeserver_url,
-        access_token=config.matrix_access_token,
-    )
+def build_matrix_destination(settings: MatrixSettings) -> MatrixDestination:
+    """Construct a Matrix destination from the container's Matrix settings."""
+    return MatrixDestination(homeserver_url=settings.homeserver_url, access_token=settings.access_token)
