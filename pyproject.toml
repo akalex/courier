@@ -38,7 +38,6 @@ asyncio_mode = "auto"
 [tool.ruff]
 line-length = 120
 target-version = "py314"
-extend-exclude = ["docs/superpowers"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "C90", "I"]
