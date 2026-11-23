@@ -2,6 +2,16 @@
 
 Notable changes to Courier are documented here. This changelog follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use Semantic Versioning.
 
+## [0.9.1] - 2026-11-23
+
+### Fixed
+
+- Report every config problem even when `role` is missing or invalid, checking the file as the role its other keys point to. Previously a 0.8.x file showed only the missing `role` and hid the rest until the next restart.
+- Reject a key that appears twice in the same YAML mapping instead of silently keeping the last value.
+- Describe YAML syntax errors by line and column only, so a secret such as a Matrix access token on the offending line is not copied into container logs.
+- Ignore local `config*.yaml` files in git and keep `.env`, local configs, and `waha-data/` out of Docker images built from a working checkout (new `.dockerignore`).
+- Reorder the "Migrating from 0.8.x" steps so values are copied into the YAML files before they are deleted from `.env`, and point the deployment snippets at 0.9.1.
+
 ## [0.9.0] - 2026-11-23
 
 ### Changed
