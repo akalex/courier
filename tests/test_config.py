@@ -149,6 +149,35 @@ def test_health_monitor_only_can_be_enabled(tmp_path, monkeypatch):
     assert load_config(path).health_monitor_only is True
 
 
+def test_health_monitor_only_does_not_require_forwarding_chat_ids(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "health_alerts_enabled: true\nhealth_monitor_only: true\nalert_chat_id: alerts@g.us\n",
+        encoding="utf-8",
+    )
+
+    cfg = load_config(path)
+
+    assert cfg.health_monitor_only is True
+    assert cfg.alert_chat_id == "alerts@g.us"
+    assert cfg.source_chat_id == ""
+    assert cfg.target_chat_id == ""
+
+
+def test_health_monitor_only_ignores_forwarding_loop_validation(tmp_path, monkeypatch):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "health_alerts_enabled: true\nhealth_monitor_only: true\n"
+        "source_chat_id: health-only\ntarget_chat_id: health-only\nalert_chat_id: alerts@g.us\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("INCLUDE_FROM_ME", "true")
+
+    cfg = load_config(path)
+
+    assert cfg.health_monitor_only is True
+
+
 def test_health_monitor_only_requires_health_alerts(tmp_path, monkeypatch):
     path = tmp_path / "config.yaml"
     path.write_text("source_chat_id: source\ntarget_chat_id: target\n", encoding="utf-8")

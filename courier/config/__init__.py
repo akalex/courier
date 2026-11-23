@@ -169,14 +169,20 @@ def _validate_routing_config(
     destination_transport: str,
     source_chat_id: str,
     target_chat_id: str,
+    alert_chat_id: str,
+    health_monitor_only: bool,
     include_from_me: bool,
     matrix_homeserver_url: str,
     matrix_access_token: str,
 ) -> None:
-    if not source_chat_id:
-        raise ValueError("Missing source_chat_id in config.yaml or SOURCE_CHAT_ID environment variable")
-    if not target_chat_id:
-        raise ValueError("Missing target_chat_id in config.yaml or TARGET_CHAT_ID environment variable")
+    if health_monitor_only:
+        if not alert_chat_id:
+            raise ValueError("Missing alert_chat_id in config.yaml or ALERT_CHAT_ID environment variable")
+    else:
+        if not source_chat_id:
+            raise ValueError("Missing source_chat_id in config.yaml or SOURCE_CHAT_ID environment variable")
+        if not target_chat_id:
+            raise ValueError("Missing target_chat_id in config.yaml or TARGET_CHAT_ID environment variable")
     if source_transport != "waha":
         raise ValueError(f"Unsupported source_transport '{source_transport}'. Available: waha")
     if destination_transport not in {"waha", "matrix"}:
@@ -186,7 +192,8 @@ def _validate_routing_config(
             raise ValueError("Missing matrix.homeserver_url or MATRIX_HOMESERVER_URL for Matrix destination")
         raise ValueError("Missing matrix.access_token or MATRIX_ACCESS_TOKEN for Matrix destination")
     if (
-        include_from_me
+        not health_monitor_only
+        and include_from_me
         and source_transport == "waha"
         and destination_transport == "waha"
         and source_chat_id == target_chat_id
@@ -328,6 +335,8 @@ def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
         destination_transport=destination_transport,
         source_chat_id=source_chat_id,
         target_chat_id=target_chat_id,
+        alert_chat_id=alert_chat_id,
+        health_monitor_only=health_monitor_only,
         include_from_me=include_from_me,
         matrix_homeserver_url=matrix_homeserver_url,
         matrix_access_token=matrix_access_token,

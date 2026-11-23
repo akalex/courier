@@ -2,6 +2,13 @@
 
 Notable changes to Courier are documented here. This changelog follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use Semantic Versioning.
 
+## [0.8.1] - 2026-11-23
+
+### Fixed
+
+- Allow `HEALTH_MONITOR_ONLY` configurations to omit forwarding source and target chat IDs.
+- Validate an explicit `alert_chat_id` for health-monitor-only containers and skip forwarding-only loop checks.
+
 ## [0.8.0] - 2026-11-23
 
 ### Changed
