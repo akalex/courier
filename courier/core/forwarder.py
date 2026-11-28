@@ -109,15 +109,16 @@ class Forwarder:
             logger.info("Filtered out message id=%s chat_id=%s", message.id, message.chat_id)
             return
 
-        text = message.text
-        if self.message_transform is not None:
+        text = message.text if "text" in self.forward_content else ""
+        if text and self.message_transform is not None:
             transformed_text = self.message_transform.render(text)
             if transformed_text is None:
-                logger.info("Message id=%s did not match message transform; skipping", message.id)
-                return
-            text = transformed_text
-        if "text" not in self.forward_content:
-            text = ""
+                logger.info(
+                    "Message id=%s did not match message transform; forwarding configured media only", message.id
+                )
+                text = ""
+            else:
+                text = transformed_text
         candidates = self._candidate_media(message)
         if not text and not candidates:
             logger.info("Dropping message id=%s with no eligible content", message.id)

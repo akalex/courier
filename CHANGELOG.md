@@ -2,6 +2,12 @@
 
 Notable changes to Courier are documented here. This changelog follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use Semantic Versioning.
 
+## [0.10.1] - 2026-11-28
+
+### Fixed
+
+- When a message does not match the configured text transform, omit its text but preserve forwarding of media selected by the route's `forward_content` and `media_types` settings.
+
 ## [0.10.0] - 2026-11-28
 
 ### Added

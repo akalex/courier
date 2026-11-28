@@ -121,23 +121,64 @@ async def test_forwarder_transforms_message_text_and_forwards_video():
 
 
 @pytest.mark.asyncio
-async def test_forwarder_skips_nonmatching_transformed_message_without_fetching_media():
+async def test_forwarder_nonmatching_transform_preserves_configured_media_selection():
     transport = FakeTransport()
     forwarder = Forwarder(
         source_chat_id="source",
         target_chat_id="target",
         destination=transport,
+        media_types=("video",),
         message_transform=MessageTextTransform(
             r'(?:екіпаж|група)\s+FPV\s+[«“"](?P<crew>[^»”"]+)[»”"]',
             'FPV crew "$crew"',
         ),
     )
-    media = RecordingMedia("video/mp4", "clip.mp4", b"video")
+    video = RecordingMedia("video/mp4", "clip.mp4", b"video")
+    image = RecordingMedia("image/jpeg", "photo.jpg", b"image")
 
-    await forwarder.handle_message(_message("not-a-crew", text="No matching crew", attachments=(media,)))
+    await forwarder.handle_message(
+        _message("not-a-crew", text="No matching crew", attachments=(video, image)),
+    )
 
-    assert media.fetch_limits == []
-    assert transport.sent == []
+    assert video.fetch_limits == [20 * 1024 * 1024]
+    assert image.fetch_limits == []
+    assert transport.sent == [
+        {
+            "chat_id": "target",
+            "text": "",
+            "attachments": (Attachment("video/mp4", "clip.mp4", b"video"),),
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_forwarder_does_not_transform_text_when_text_forwarding_is_disabled():
+    transport = FakeTransport()
+    forwarder = Forwarder(
+        source_chat_id="source",
+        target_chat_id="target",
+        destination=transport,
+        forward_content=("media",),
+        media_types=("image",),
+        message_transform=MessageTextTransform(
+            r'crew (?P<crew>\w+)',
+            'Draft for "$crew"',
+        ),
+    )
+    image = RecordingMedia("image/jpeg", "photo.jpg", b"image")
+
+    await forwarder.handle_message(
+        _message("media-only-transform-configured", text="crew matched", attachments=(image,)),
+    )
+
+    assert image.fetch_limits == [20 * 1024 * 1024]
+    assert transport.sent == [
+        {
+            "chat_id": "target",
+            "text": "",
+            "attachments": (Attachment("image/jpeg", "photo.jpg", b"image"),),
+        },
+    ]
 
 
 @pytest.mark.asyncio
