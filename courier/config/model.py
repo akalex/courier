@@ -16,6 +16,8 @@ from pydantic import (
     model_validator,
 )
 
+from ..core.text_transform import MessageTextTransform
+
 
 def _as_list(value: Any) -> Any:
     """Accept a YAML list or a comma-separated string, dropping blank items."""
@@ -125,6 +127,25 @@ class FilterSettings(_Section):
     )
 
 
+class MessageTransformSettings(_Section):
+    """Extract named values from message text and render a replacement."""
+
+    pattern: NonEmptyStr = Field(
+        description="Python regular expression with at least one named capture group, such as (?P<crew>...).",
+    )
+    template: NonEmptyStr = Field(
+        description="Replacement text using $name or ${name} placeholders for named capture groups.",
+    )
+
+    @model_validator(mode="after")
+    def _valid_transform(self) -> Self:
+        MessageTextTransform(self.pattern, self.template)
+        return self
+
+    def build(self) -> MessageTextTransform:
+        return MessageTextTransform(self.pattern, self.template)
+
+
 class _CommonConfig(_Section):
     webhook_url: NonEmptyStr = Field(
         description="URL WAHA calls to deliver events to this container, for example "
@@ -189,6 +210,11 @@ class ForwarderConfig(_CommonConfig):
         description="Largest attachment in bytes; larger ones are skipped (the text is still sent).",
     )
     filters: FilterSettings = Field(default=FilterSettings(), description="Which messages are forwarded.")
+    message_transform: MessageTransformSettings | None = Field(
+        default=None,
+        description="Optionally replace source text with a template populated from the first regex match. "
+        "A non-matching message and its media are skipped.",
+    )
     health_alerts: bool = Field(
         default=False,
         description="Also watch WAHA session health and send alerts to alert_chat_id. "

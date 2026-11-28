@@ -128,6 +128,7 @@ For either route, add `filters` to the same file if you want to filter messages 
 - Media is downloaded only for messages from the source chat that pass the filters, and only when the attachment can match `media_types`. A generic binary file (`application/octet-stream`) without a video extension is downloaded when either `video` or `file` is selected, because only its bytes show whether it is an MP4.
 - Media URLs are fetched only when they resolve to the configured WAHA origin. Loopback media URLs are rewritten to the configured WAHA host. This prevents Courier's WAHA API-key header from being sent to an unrelated host; URLs on another hostname/origin are skipped.
 - Included keywords search the message text/caption using case-insensitive substring matching. A keyword filter accepts a message if any configured keyword matches.
+- A route can use `message_transform` to extract named regex groups from the source text and render a replacement template. The first match is used; when there is no match, Courier skips the message and its media. For example, `група FPV «HAOS» ... FPV “PEGAS 10”` extracts `HAOS` (not the later aircraft model), while `екіпаж FPV «ХЕНТАЙ»` extracts `ХЕНТАЙ`.
 - Excluded keywords are also case-insensitive substring matches against the text/caption. If any excluded keyword appears, the message is rejected even when it matches an included keyword or sender. Exclusions are vetoes; included keywords and sender criteria retain their OR behavior.
 - Sender filters match the normalized sender ID or sender name. Normalization is case-insensitive and strips a leading `+` and any `@...` suffix.
 - If both keyword and sender filters are configured, they are combined with **OR**: matching either filter is sufficient. With no filters configured, every message from the source chat is eligible. A media-only message has no matching keyword text, so it passes a keyword filter only if there is a matching caption.
@@ -193,9 +194,20 @@ Forwarder-only keys (rejected on a health monitor):
 | `filters.keywords` | no | empty | Forward a message whose text contains any of these (case-insensitive). A list or a comma-separated string. |
 | `filters.exclude_keywords` | no | empty | Never forward a message whose text contains any of these. |
 | `filters.senders` | no | empty | Forward a message sent by any of these sender IDs or names. |
+| `message_transform` | no | — | Extract named regex groups from source text and render a replacement with `$group` placeholders. Messages with no match (or no eligible content) are skipped. |
 | `health_alerts` | no | `false` | Also watch WAHA session health and send alerts to `alert_chat_id`. Normally the health-monitor container does this. |
 
 Filters combine like this: a message must match at least one include criterion (a keyword or a sender), if any are configured, and must not contain an excluded keyword. With only exclusions configured, every message without an excluded keyword is forwarded.
+
+To extract a crew name and send the drafted text with the source message's eligible media, configure:
+
+```yaml
+message_transform:
+  pattern: '(?:екіпаж|група)\s+FPV\s+[«“"](?P<crew>[^»”"]+)[»”"]'
+  template: 'FPV crew "$crew"'
+```
+
+This pattern recognizes either `екіпаж FPV` or `група FPV`, with straight quotes, Ukrainian angle quotes (`«...»`), or curly quotes (`“...”`) around the name. It captures the name immediately after that crew label, so later quoted `FPV` model names are not selected. `pattern` is a Python regular expression and must contain at least one named capture group. `template` uses `$name` or `${name}` placeholders matching those group names. Courier uses the first regex match; messages without a match are not sent, including their media. Existing keyword and sender filters still run against the original source text.
 
 `webhook_url` is the URL WAHA calls to deliver events, so it must be reachable from the WAHA container or network. It is distinct from `waha.url`, which Courier uses to call WAHA. Give each Courier container its own `webhook_url`, typically based on its Compose service name; all containers can share the same WAHA session and internal `listen_port`.
 
@@ -206,7 +218,7 @@ For a Matrix destination, `target_chat_id` (and `alert_chat_id`, if alerts go to
 Courier publishes a JSON Schema for its config files. In VS Code with the [Red Hat YAML extension](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml), make this the first line of a config file to get autocomplete, a description of each key on hover, and errors highlighted as you type:
 
 ```text
-# yaml-language-server: $schema=https://raw.githubusercontent.com/akalex/courier/0.9.1/courier-config.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/akalex/courier/0.10.0/courier-config.schema.json
 ```
 
 Use the version that matches your `COURIER_TAG`. This also works when editing files on the VM over Remote-SSH. The files in [examples/](examples/) point at the schema in this repository.
@@ -305,7 +317,7 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
 4. `.env` belongs to WAHA. The only Courier line it holds is the image tag every Courier container runs. Add it to the generated file:
 
    ```bash
-   echo "COURIER_TAG=0.9.1" >> .env
+   echo "COURIER_TAG=0.10.0" >> .env
    ```
 
    Use an exact version for a reproducible deployment, or `latest` to follow the newest release. Everything else Courier needs goes in its YAML files; compare with [.env.example](.env.example).
@@ -315,7 +327,7 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
    `config.yaml` (`courier-aircraft-losses`, forwards messages that mention `urgent` or `alert`):
 
    ```yaml
-   # yaml-language-server: $schema=https://raw.githubusercontent.com/akalex/courier/0.9.1/courier-config.schema.json
+   # yaml-language-server: $schema=https://raw.githubusercontent.com/akalex/courier/0.10.0/courier-config.schema.json
    role: forwarder
    webhook_url: http://courier-aircraft-losses:8000/webhook
 
@@ -337,7 +349,7 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
    `config-tfl.yaml` (`courier-tfl`, forwards only video attachments, without captions):
 
    ```yaml
-   # yaml-language-server: $schema=https://raw.githubusercontent.com/akalex/courier/0.9.1/courier-config.schema.json
+   # yaml-language-server: $schema=https://raw.githubusercontent.com/akalex/courier/0.10.0/courier-config.schema.json
    role: forwarder
    webhook_url: http://courier-tfl:8000/webhook
 
@@ -355,7 +367,7 @@ The Oracle `VM.Standard.A1.Flex` shape uses ARM64. Courier's published image inc
    `config-health.yaml` (`courier-health`, the only container that sends health alerts):
 
    ```yaml
-   # yaml-language-server: $schema=https://raw.githubusercontent.com/akalex/courier/0.9.1/courier-config.schema.json
+   # yaml-language-server: $schema=https://raw.githubusercontent.com/akalex/courier/0.10.0/courier-config.schema.json
    role: health-monitor
    webhook_url: http://courier-health:8000/webhook
    alert_chat_id: "15551234567@c.us"

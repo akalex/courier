@@ -7,6 +7,7 @@ from .domain import Attachment, MediaRef, Message, TransientMediaError
 from .filters import AllOf
 from .media import candidate_media_kinds, media_kind
 from .ports import Filter, MessageDestination
+from .text_transform import MessageTextTransform
 
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,7 @@ class Forwarder:
         max_attachment_size: int = 20 * 1024 * 1024,
         forward_content: tuple[str, ...] = ("text", "media"),
         media_types: tuple[str, ...] = ("image", "video", "audio", "file"),
+        message_transform: MessageTextTransform | None = None,
     ) -> None:
         """Initialize a forwarder with source and destination chat identifiers.
 
@@ -76,6 +78,7 @@ class Forwarder:
             max_attachment_size: Maximum accepted attachment byte size.
             forward_content: Message content types to send: text, media, or both.
             media_types: Media categories eligible for forwarding.
+            message_transform: Optional regex-and-template transform for message text.
         """
         if recent_ids <= 0:
             raise ValueError("recent_ids must be greater than zero")
@@ -86,6 +89,7 @@ class Forwarder:
         self.max_attachment_size = max_attachment_size
         self.forward_content = frozenset(forward_content)
         self.media_types = frozenset(media_types)
+        self.message_transform = message_transform
         self._ledger = _DeliveryLedger(recent_ids)
 
     async def handle_message(self, message: Message) -> None:
@@ -105,7 +109,15 @@ class Forwarder:
             logger.info("Filtered out message id=%s chat_id=%s", message.id, message.chat_id)
             return
 
-        text = message.text if "text" in self.forward_content else ""
+        text = message.text
+        if self.message_transform is not None:
+            transformed_text = self.message_transform.render(text)
+            if transformed_text is None:
+                logger.info("Message id=%s did not match message transform; skipping", message.id)
+                return
+            text = transformed_text
+        if "text" not in self.forward_content:
+            text = ""
         candidates = self._candidate_media(message)
         if not text and not candidates:
             logger.info("Dropping message id=%s with no eligible content", message.id)
