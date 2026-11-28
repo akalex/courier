@@ -109,19 +109,17 @@ class Forwarder:
             logger.info("Filtered out message id=%s chat_id=%s", message.id, message.chat_id)
             return
 
-        text = message.text
-        eligible_media_types = self.media_types
-        if self.message_transform is not None:
+        text = message.text if "text" in self.forward_content else ""
+        if text and self.message_transform is not None:
             transformed_text = self.message_transform.render(text)
             if transformed_text is None:
-                logger.info("Message id=%s did not match message transform; forwarding video only", message.id)
+                logger.info(
+                    "Message id=%s did not match message transform; forwarding configured media only", message.id
+                )
                 text = ""
-                eligible_media_types = eligible_media_types & {"video"}
             else:
                 text = transformed_text
-        if "text" not in self.forward_content:
-            text = ""
-        candidates = self._candidate_media(message, eligible_media_types)
+        candidates = self._candidate_media(message)
         if not text and not candidates:
             logger.info("Dropping message id=%s with no eligible content", message.id)
             return
@@ -136,18 +134,13 @@ class Forwarder:
             raise
         self._ledger.settle(message.id)
 
-    def _candidate_media(
-        self,
-        message: Message,
-        eligible_media_types: frozenset[str] | None = None,
-    ) -> tuple[MediaRef, ...]:
+    def _candidate_media(self, message: Message) -> tuple[MediaRef, ...]:
         if "media" not in self.forward_content:
             return ()
-        selected_types = self.media_types if eligible_media_types is None else eligible_media_types
         return tuple(
             media
             for media in message.attachments
-            if candidate_media_kinds(media.mime_type, media.filename) & selected_types
+            if candidate_media_kinds(media.mime_type, media.filename) & self.media_types
         )
 
     async def _deliver(self, message: Message, text: str, candidates: tuple[MediaRef, ...]) -> None:

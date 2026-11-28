@@ -6,7 +6,7 @@ Notable changes to Courier are documented here. This changelog follows [Keep a C
 
 ### Fixed
 
-- When a message does not match the configured text transform, forward only eligible video media without text instead of dropping the message.
+- When a message does not match the configured text transform, omit its text but preserve forwarding of media selected by the route's `forward_content` and `media_types` settings.
 
 ## [0.10.0] - 2026-11-28
 
