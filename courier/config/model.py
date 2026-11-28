@@ -213,7 +213,7 @@ class ForwarderConfig(_CommonConfig):
     message_transform: MessageTransformSettings | None = Field(
         default=None,
         description="Optionally replace source text with a template populated from the first regex match. "
-        "A non-matching message and its media are skipped.",
+        "When there is no match, only eligible video is forwarded, without text.",
     )
     health_alerts: bool = Field(
         default=False,

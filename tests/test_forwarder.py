@@ -121,7 +121,7 @@ async def test_forwarder_transforms_message_text_and_forwards_video():
 
 
 @pytest.mark.asyncio
-async def test_forwarder_skips_nonmatching_transformed_message_without_fetching_media():
+async def test_forwarder_sends_only_video_for_nonmatching_transformed_message():
     transport = FakeTransport()
     forwarder = Forwarder(
         source_chat_id="source",
@@ -132,12 +132,22 @@ async def test_forwarder_skips_nonmatching_transformed_message_without_fetching_
             'FPV crew "$crew"',
         ),
     )
-    media = RecordingMedia("video/mp4", "clip.mp4", b"video")
+    video = RecordingMedia("video/mp4", "clip.mp4", b"video")
+    image = RecordingMedia("image/jpeg", "photo.jpg", b"image")
 
-    await forwarder.handle_message(_message("not-a-crew", text="No matching crew", attachments=(media,)))
+    await forwarder.handle_message(
+        _message("not-a-crew", text="No matching crew", attachments=(video, image)),
+    )
 
-    assert media.fetch_limits == []
-    assert transport.sent == []
+    assert video.fetch_limits == [20 * 1024 * 1024]
+    assert image.fetch_limits == []
+    assert transport.sent == [
+        {
+            "chat_id": "target",
+            "text": "",
+            "attachments": (Attachment("video/mp4", "clip.mp4", b"video"),),
+        },
+    ]
 
 
 @pytest.mark.asyncio

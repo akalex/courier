@@ -220,7 +220,7 @@
             }
           ],
           "default": null,
-          "description": "Optionally replace source text with a template populated from the first regex match. A non-matching message and its media are skipped."
+          "description": "Optionally replace source text with a template populated from the first regex match. When there is no match, only eligible video is forwarded, without text."
         },
         "health_alerts": {
           "default": false,
