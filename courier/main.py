@@ -96,6 +96,7 @@ def _build_forwarder(config: ForwarderConfig, destination: MessageDestination) -
         max_attachment_size=config.max_attachment_size,
         forward_content=config.forward_content,
         media_types=config.media_types,
+        message_transform=config.message_transform.build() if config.message_transform is not None else None,
     )
 
 

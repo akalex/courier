@@ -5,6 +5,7 @@ import pytest
 from courier.core.domain import Attachment, Message, TransientMediaError
 from courier.core.filters import AllOf, KeywordFilter, SenderFilter
 from courier.core.forwarder import Forwarder
+from courier.core.text_transform import MessageTextTransform
 
 
 class FakeTransport:
@@ -88,6 +89,55 @@ async def test_forwarder_preserves_message_text_and_forwards_attachment():
     assert transport.sent[0]["chat_id"] == "target"
     assert transport.sent[0]["text"] == "urgent update"
     assert transport.sent[0]["attachments"][0].filename == "file.png"
+
+
+@pytest.mark.asyncio
+async def test_forwarder_transforms_message_text_and_forwards_video():
+    transport = FakeTransport()
+    forwarder = Forwarder(
+        source_chat_id="source",
+        target_chat_id="target",
+        destination=transport,
+        message_transform=MessageTextTransform(
+            r'(?:екіпаж|група)\s+FPV\s+[«“"](?P<crew>[^»”"]+)[»”"]',
+            'FPV crew "$crew"',
+        ),
+    )
+    message = _message(
+        "crew-video",
+        text='13:10група FPV «АНУБІС» (рр 1158омпбр) FPV "Шурікен 10"СВП',
+        attachments=(Attachment("video/mp4", "clip.mp4", b"video"),),
+    )
+
+    await forwarder.handle_message(message)
+
+    assert transport.sent == [
+        {
+            "chat_id": "target",
+            "text": 'FPV crew "АНУБІС"',
+            "attachments": (Attachment("video/mp4", "clip.mp4", b"video"),),
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_forwarder_skips_nonmatching_transformed_message_without_fetching_media():
+    transport = FakeTransport()
+    forwarder = Forwarder(
+        source_chat_id="source",
+        target_chat_id="target",
+        destination=transport,
+        message_transform=MessageTextTransform(
+            r'(?:екіпаж|група)\s+FPV\s+[«“"](?P<crew>[^»”"]+)[»”"]',
+            'FPV crew "$crew"',
+        ),
+    )
+    media = RecordingMedia("video/mp4", "clip.mp4", b"video")
+
+    await forwarder.handle_message(_message("not-a-crew", text="No matching crew", attachments=(media,)))
+
+    assert media.fetch_limits == []
+    assert transport.sent == []
 
 
 @pytest.mark.asyncio

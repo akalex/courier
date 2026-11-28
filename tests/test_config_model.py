@@ -122,6 +122,49 @@ def test_empty_sections_mean_defaults():
     assert config.filters.keywords == ()
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ('екіпаж FPV "ФАЛЬКОН"', 'FPV crew "ФАЛЬКОН"'),
+        ("13:35 група FPV «HAOS» (РР 1158ОМПБр) FPV “PEGAS 10”", 'FPV crew "HAOS"'),
+        ("28.11.2026 14:05, СтП «ОСАКА» екіпаж FPV «ХЕНТАЙ» 2 р", 'FPV crew "ХЕНТАЙ"'),
+        ('13:10група FPV «АНУБІС» (рр 1158омпбр) FPV "Шурікен 10"СВП', 'FPV crew "АНУБІС"'),
+        ("28.11.2026 15:54 СтП «РАНЧО» екіпаж FPV «СОКІЛ» 1 рУБпАК", 'FPV crew "СОКІЛ"'),
+        ("message without a crew", None),
+    ],
+)
+def test_message_transform_config_extracts_crew_name(text, expected):
+    config = COURIER_CONFIG.validate_python(
+        {
+            **FORWARDER,
+            "message_transform": {
+                "pattern": r'(?:екіпаж|група)\s+FPV\s+[«“"](?P<crew>[^»”"]+)[»”"]',
+                "template": 'FPV crew "$crew"',
+            },
+        },
+    )
+
+    assert isinstance(config, ForwarderConfig)
+    assert config.message_transform is not None
+    assert config.message_transform.build().render(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("pattern", "template", "error"),
+    [
+        ("[", "$crew", "Invalid message_transform.pattern"),
+        ("crew", "$crew", "named capture group"),
+        (r"(?P<crew>[^ ]+)", "$name", "unknown capture group"),
+        (r"(?P<crew>[^ ]+)", "$", "invalid placeholder"),
+    ],
+)
+def test_invalid_message_transform_config_is_rejected(pattern, template, error):
+    with pytest.raises(ValidationError, match=error):
+        COURIER_CONFIG.validate_python(
+            {**FORWARDER, "message_transform": {"pattern": pattern, "template": template}},
+        )
+
+
 def test_enum_values_are_case_insensitive():
     config = COURIER_CONFIG.validate_python(
         {**FORWARDER, "media_types": ["Video"], "log_level": "debug", "forward_content": ["MEDIA"]},

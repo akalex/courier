@@ -2,6 +2,12 @@
 
 Notable changes to Courier are documented here. This changelog follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use Semantic Versioning.
 
+## [0.10.0] - 2026-11-28
+
+### Added
+
+- Extract named values from message text with an optional regex-and-template `message_transform`, and send the drafted text with eligible media. Crew-name matching supports `екіпаж FPV` and `група FPV` labels with straight, angle, or curly quotes.
+
 ## [0.9.1] - 2026-11-23
 
 ### Fixed

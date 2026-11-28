@@ -210,6 +210,18 @@
           },
           "description": "Which messages are forwarded."
         },
+        "message_transform": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MessageTransformSettings"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optionally replace source text with a template populated from the first regex match. A non-matching message and its media are skipped."
+        },
         "health_alerts": {
           "default": false,
           "description": "Also watch WAHA session health and send alerts to alert_chat_id. Normally the health-monitor container does this.",
@@ -336,6 +348,30 @@
         "access_token"
       ],
       "title": "MatrixSettings",
+      "type": "object"
+    },
+    "MessageTransformSettings": {
+      "additionalProperties": false,
+      "description": "Extract named values from message text and render a replacement.",
+      "properties": {
+        "pattern": {
+          "description": "Python regular expression with at least one named capture group, such as (?P<crew>...).",
+          "minLength": 1,
+          "title": "Pattern",
+          "type": "string"
+        },
+        "template": {
+          "description": "Replacement text using $name or ${name} placeholders for named capture groups.",
+          "minLength": 1,
+          "title": "Template",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pattern",
+        "template"
+      ],
+      "title": "MessageTransformSettings",
       "type": "object"
     },
     "WahaSettings": {
